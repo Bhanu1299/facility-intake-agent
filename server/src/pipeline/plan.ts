@@ -109,6 +109,27 @@ export interface VendorRanking {
 const monthYear = (d: Date): string =>
   d.toLocaleDateString('en-US', { month: 'short', year: 'numeric', timeZone: SITE_TIME_ZONE });
 
+/**
+ * Fixed scales (not min-max across candidates) so a score means the same thing whether there
+ * are 2 eligible vendors or 10, and the runner-up never shows as 0.
+ */
+export const SCORE_SCALES = { maxMiles: 30, minRate: 50, maxRate: 150 };
+
+const clamp01 = (x: number): number => Math.min(1, Math.max(0, x));
+
+export function vendorScore(
+  v: { performanceScore: number; rating: number; hourlyRate: number },
+  miles: number,
+): number {
+  const { maxMiles, minRate, maxRate } = SCORE_SCALES;
+  return (
+    SCORE_WEIGHTS.performance * clamp01(v.performanceScore / 100) +
+    SCORE_WEIGHTS.distance * clamp01(1 - miles / maxMiles) +
+    SCORE_WEIGHTS.rating * clamp01(v.rating / 5) +
+    SCORE_WEIGHTS.price * clamp01((maxRate - v.hourlyRate) / (maxRate - minRate))
+  );
+}
+
 /** Hard filters (trade, insurance, availability window), then a weighted score. Top 3. */
 export function rankVendors(
   vendors: VendorDoc[],
@@ -144,24 +165,14 @@ export function rankVendors(
   }
 
   const range = (xs: number[]): [number, number] => [Math.min(...xs), Math.max(...xs)];
-  const norm = (x: number, [lo, hi]: [number, number], lowerIsBetter = false): number => {
-    if (hi === lo) return 1;
-    const n = (x - lo) / (hi - lo);
-    return lowerIsBetter ? 1 - n : n;
-  };
   const perfR = range(eligible.map((e) => e.v.performanceScore));
   const distR = range(eligible.map((e) => e.miles));
-  const ratingR = range(eligible.map((e) => e.v.rating));
   const priceR = range(eligible.map((e) => e.v.hourlyRate));
 
   const scored = eligible
     .map((e) => ({
       ...e,
-      score:
-        SCORE_WEIGHTS.performance * norm(e.v.performanceScore, perfR) +
-        SCORE_WEIGHTS.distance * norm(e.miles, distR, true) +
-        SCORE_WEIGHTS.rating * norm(e.v.rating, ratingR) +
-        SCORE_WEIGHTS.price * norm(e.v.hourlyRate, priceR, true),
+      score: vendorScore(e.v, e.miles),
     }))
     .sort((a, b) => b.score - a.score || a.miles - b.miles);
 

@@ -1,7 +1,14 @@
 import { NTE_TABLE } from '../config/nte';
 import type { VendorDoc } from '../models/catalog';
 import { generateSeedData } from '../seed/generate';
-import { haversineMiles, nextAvailableAt, planNte, rankVendors, SCORE_WEIGHTS } from './plan';
+import {
+  haversineMiles,
+  nextAvailableAt,
+  planNte,
+  rankVendors,
+  SCORE_WEIGHTS,
+  vendorScore,
+} from './plan';
 
 // Thursday 2026-10-29 10:00 in Buffalo (EDT, UTC-4).
 const THU_10AM = new Date('2026-10-29T14:00:00Z');
@@ -173,8 +180,12 @@ describe('rankVendors', () => {
     const r = rankVendors(vendors, site, 'plumbing', 'routine', THU_10AM);
     expect(r.top).toHaveLength(3);
     expect(r.top[0]!.vendorId).toBe('a');
-    // a: perf 1*0.4 + dist 1*0.3 + rating 1*0.2 + price 0*0.1 = 0.9
-    expect(r.top[0]!.score).toBeCloseTo(0.9, 3);
+    // a: 0.4*0.95 + 0.3*(1 - miles/30) + 0.2*(4.9/5) + 0.1*((150-140)/100)
+    const milesA = haversineMiles(site, vendors[0]!);
+    expect(r.top[0]!.score).toBeCloseTo(0.38 + 0.3 * (1 - milesA / 30) + 0.196 + 0.01, 3);
+    expect(r.top[0]!.score).toBeCloseTo(vendorScore(vendors[0]!, milesA), 3);
+    // Fixed scales: the runner-up still gets a meaningful score.
+    expect(r.top[2]!.score).toBeGreaterThan(0.5);
     expect(r.top[0]!.reason).toMatch(
       /^Closest \(\d+(\.\d)? mi\), 4\.9 rating, top performance score \(95\), insurance valid to Jun 2027\.$/,
     );
