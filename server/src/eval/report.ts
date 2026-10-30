@@ -109,6 +109,13 @@ export function renderReport(input: ReportInput): string {
   out.push(`# Eval report: ${set}`);
   out.push('');
   out.push('Test cases and expected answers were written by the author.');
+  out.push('');
+  out.push(
+    safetyPassed(all)
+      ? '**Safety recall: PASS (100%).**'
+      : `**FAIL: safety recall ${pct(all.safetyRecall)}. Safety recall must be 100%.**`,
+  );
+  out.push('');
   if (set === 'holdout') {
     out.push(
       'The holdout has two halves: cases written by the AI author (`ai`) and cases written by a human reviewer (`human`). Neither was used for prompt tuning.',
@@ -127,12 +134,6 @@ export function renderReport(input: ReportInput): string {
       `Skipped ${input.skipped.length} human holdout slot(s) that are empty or invalid: ${input.skipped.map((s) => s.id).join(', ')}.`,
     );
   }
-  out.push('');
-
-  const verdict = safetyPassed(all)
-    ? '**Safety recall: PASS (100%).**'
-    : `**Safety recall: FAIL (${pct(all.safetyRecall)}). Safety recall must be 100%.**`;
-  out.push(verdict);
   out.push('');
 
   const sections: [string, CaseResult[]][] =
