@@ -1,6 +1,12 @@
 import { Router } from 'express';
 import type { Budget } from '@fia/shared';
-import { AssetModel, BudgetModel, SiteModel, VendorModel } from '../models/catalog';
+import {
+  AssetModel,
+  BudgetModel,
+  SensorReadingModel,
+  SiteModel,
+  VendorModel,
+} from '../models/catalog';
 
 export function toBudget(doc: {
   _id: string;
@@ -42,6 +48,22 @@ export function catalogRouter(): Router {
 
   router.get('/vendors', async (_req, res) => {
     res.json(await VendorModel.find().sort({ name: 1 }));
+  });
+
+  // Recent readings for one sensor (simulator sparkline). Default 48h, max 14 days.
+  router.get('/sensor-readings', async (req, res) => {
+    const assetId = typeof req.query.assetId === 'string' ? req.query.assetId : '';
+    if (!assetId) {
+      res.status(400).json({ error: 'assetId is required' });
+      return;
+    }
+    const hours = Math.min(Math.max(Number(req.query.hours) || 48, 1), 14 * 24);
+    const since = new Date(Date.now() - hours * 3_600_000);
+    const readings = await SensorReadingModel.find({ assetId, readingAt: { $gte: since } })
+      .sort({ readingAt: 1 })
+      .select({ _id: 0, assetId: 1, metric: 1, value: 1, unit: 1, readingAt: 1 })
+      .lean();
+    res.json(readings);
   });
 
   router.get('/budgets', async (_req, res) => {
