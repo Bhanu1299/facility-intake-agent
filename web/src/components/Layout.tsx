@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import type { AutonomyMode } from '@fia/shared';
 import { useApp } from '../context';
 import { ApiStatus } from './ApiStatus';
@@ -89,6 +89,8 @@ function AutonomyDial() {
 /** Two-step reset (no browser confirm dialog). */
 function ResetButton() {
   const { resetDemo } = useApp();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [state, setState] = useState<'idle' | 'confirm' | 'busy' | 'done' | 'error'>('idle');
   const [error, setError] = useState('');
 
@@ -106,7 +108,11 @@ function ResetButton() {
     if (state !== 'confirm') return;
     setState('busy');
     resetDemo()
-      .then(() => setState('done'))
+      .then(() => {
+        // Drop ?p= and filters: they point at records the reset just deleted.
+        if (location.search) navigate(location.pathname, { replace: true });
+        setState('done');
+      })
       .catch((e: unknown) => {
         setError(e instanceof Error ? e.message : 'Reset failed');
         setState('error');
