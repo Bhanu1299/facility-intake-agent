@@ -1,0 +1,72 @@
+[
+  {
+    "id": "holdout-ai-01",
+    "category": "easy",
+    "input": { "type": "request", "siteId": "elmwood", "text": "Toilet in the upstairs women's restroom is clogged" },
+    "expected": { "trade": "plumbing", "assetId": "elmwood-restroom-womens", "urgency": "routine", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "Clogged toilet, other restroom available."
+  },
+  {
+    "id": "holdout-ai-02",
+    "category": "easy",
+    "input": { "type": "request", "siteId": "amherst", "text": "The walk-in cooler door gasket is torn along the bottom" },
+    "expected": { "trade": "refrigeration", "assetId": "amherst-walkin-cooler", "urgency": "routine", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "Gasket wear; cooler still cold."
+  },
+  {
+    "id": "holdout-ai-03",
+    "category": "easy",
+    "input": { "type": "request", "siteId": "hertel", "text": "Fryer thermostat seems off, the oil runs about 25 degrees hotter than the setting" },
+    "expected": { "trade": "electrical", "assetId": "hertel-fryer", "urgency": "routine", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "Calibration issue, fryer still usable."
+  },
+  {
+    "id": "holdout-ai-04",
+    "category": "messy",
+    "input": { "type": "request", "siteId": "canalside", "text": "ice machin making ice that tastes weird, also its kinda slow" },
+    "expected": { "trade": "refrigeration", "assetId": "canalside-ice-machine", "urgency": "routine", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "Typos, two symptoms of one asset."
+  },
+  {
+    "id": "holdout-ai-05",
+    "category": "messy",
+    "input": { "type": "request", "siteId": "cheektowaga", "text": "womens bathroom sink wont stop dripping and the toilet seat is cracked" },
+    "expected": { "trade": "plumbing", "assetId": "cheektowaga-restroom-womens", "urgency": "low", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "Two minor problems, same asset."
+  },
+  {
+    "id": "holdout-ai-06",
+    "category": "emergency",
+    "input": { "type": "request", "siteId": "hertel", "text": "basement is flooding, water is coming from the bottom of the water heater" },
+    "expected": { "trade": "plumbing", "assetId": "hertel-water-heater", "urgency": "emergency", "duplicateOf": null, "needsHuman": false, "safetyEmergency": true },
+    "note": "Flooding."
+  },
+  {
+    "id": "holdout-ai-07",
+    "category": "duplicate",
+    "input": { "type": "request", "siteId": "canalside", "text": "the AC on the roof over the dining room is still banging really loud" },
+    "expected": { "trade": "hvac", "assetId": "canalside-rtu-1", "urgency": "urgent", "duplicateOf": "wo-seed-002", "needsHuman": false, "safetyEmergency": false },
+    "note": "Same asset and problem as the open rattling work order."
+  },
+  {
+    "id": "holdout-ai-08",
+    "category": "duplicate",
+    "input": { "type": "request", "siteId": "cheektowaga", "text": "seal on the walk-in cooler door is ripped" },
+    "expected": { "trade": "refrigeration", "assetId": "cheektowaga-walkin-cooler", "urgency": "routine", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "Same problem as wo-seed-006 but that one is 120h old: outside the 72h window, so no merge."
+  },
+  {
+    "id": "holdout-ai-09",
+    "category": "sensor",
+    "input": { "type": "sensor", "assetId": "canalside-rtu-1", "metric": "vibration", "value": 6.6, "unit": "mm/s" },
+    "expected": { "trade": "hvac", "assetId": "canalside-rtu-1", "urgency": "urgent", "duplicateOf": "wo-seed-002", "needsHuman": false, "safetyEmergency": false },
+    "note": "Below 7.0 but trending up: crosses in about 1 day. Same asset as the open rattling work order."
+  },
+  {
+    "id": "holdout-ai-10",
+    "category": "sensor",
+    "input": { "type": "sensor", "assetId": "elmwood-rtu-2", "metric": "vibration", "value": 9.4, "unit": "mm/s" },
+    "expected": { "trade": "hvac", "assetId": "elmwood-rtu-2", "urgency": "emergency", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "2.4 mm/s past 7.0 (r=1.2)."
+  }
+]

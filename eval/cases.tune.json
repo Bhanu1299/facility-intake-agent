@@ -1,0 +1,282 @@
+[
+  {
+    "id": "tune-01",
+    "category": "easy",
+    "input": { "type": "request", "siteId": "elmwood", "text": "The women's restroom sink faucet is dripping" },
+    "expected": { "trade": "plumbing", "assetId": "elmwood-restroom-womens", "urgency": "low", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "Minor drip, restroom usable."
+  },
+  {
+    "id": "tune-02",
+    "category": "easy",
+    "input": { "type": "request", "siteId": "canalside", "text": "Walk-in freezer is reading 15 degrees, it should be below zero" },
+    "expected": { "trade": "refrigeration", "assetId": "canalside-walkin-freezer", "urgency": "urgent", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "Freezer not holding temp: food safety today."
+  },
+  {
+    "id": "tune-03",
+    "category": "easy",
+    "input": { "type": "request", "siteId": "hertel", "text": "Fryer is not heating up" },
+    "expected": { "trade": "electrical", "assetId": "hertel-fryer", "urgency": "urgent", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "Fryer down hurts service."
+  },
+  {
+    "id": "tune-04",
+    "category": "easy",
+    "input": { "type": "request", "siteId": "amherst", "text": "No hot water at the kitchen hand sinks" },
+    "expected": { "trade": "plumbing", "assetId": "amherst-water-heater", "urgency": "urgent", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "Hot water required by health code."
+  },
+  {
+    "id": "tune-05",
+    "category": "easy",
+    "input": { "type": "request", "siteId": "cheektowaga", "text": "Front door lock is sticking, it's hard to lock up at close" },
+    "expected": { "trade": "handyman", "assetId": "cheektowaga-front-door", "urgency": "low", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "Still locks; minor."
+  },
+  {
+    "id": "tune-06",
+    "category": "easy",
+    "input": { "type": "request", "siteId": "elmwood", "text": "Ice machine is making very little ice" },
+    "expected": { "trade": "refrigeration", "assetId": "elmwood-ice-machine", "urgency": "routine", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "Slow ice, operations continue."
+  },
+  {
+    "id": "tune-07",
+    "category": "easy",
+    "input": { "type": "request", "siteId": "canalside", "text": "We saw a mouse in the dry storage room this morning" },
+    "expected": { "trade": "pest_control", "assetId": null, "urgency": "urgent", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "Pest in a food area; no equipment asset."
+  },
+  {
+    "id": "tune-08",
+    "category": "easy",
+    "input": { "type": "request", "siteId": "hertel", "text": "A light fixture in the dining room is flickering" },
+    "expected": { "trade": "electrical", "assetId": null, "urgency": "low", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "No matching asset; not needsHuman."
+  },
+  {
+    "id": "tune-09",
+    "category": "easy",
+    "input": { "type": "request", "siteId": "amherst", "text": "Dishwasher is leaking a little water from the door" },
+    "expected": { "trade": "plumbing", "assetId": "amherst-dishwasher", "urgency": "routine", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "Small leak, still running."
+  },
+  {
+    "id": "tune-10",
+    "category": "easy",
+    "input": { "type": "request", "siteId": "cheektowaga", "text": "Rooftop AC unit 1 is not cooling, the dining room is 82 degrees" },
+    "expected": { "trade": "hvac", "assetId": "cheektowaga-rtu-1", "urgency": "urgent", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "AC out in occupied space. Also exercises the low-budget site."
+  },
+  {
+    "id": "tune-11",
+    "category": "messy",
+    "input": { "type": "request", "siteId": "elmwood", "text": "yo the walkin is warm af, like 48 on the thermometer, stuffs gonna spoil" },
+    "expected": { "trade": "refrigeration", "assetId": "elmwood-walkin-cooler", "urgency": "urgent", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "Slang; 'walkin' + warm = cooler."
+  },
+  {
+    "id": "tune-12",
+    "category": "messy",
+    "input": { "type": "request", "siteId": "canalside", "text": "dishwaser broke n theres water on the floor by it, also the ice machien is leaking" },
+    "expected": { "trade": "plumbing", "assetId": "canalside-dishwasher", "urgency": "urgent", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "Typos, two problems; primary is the dishwasher."
+  },
+  {
+    "id": "tune-13",
+    "category": "messy",
+    "input": { "type": "request", "siteId": "hertel", "text": "fryer wont fire up this morning, display just blinks E5" },
+    "expected": { "trade": "electrical", "assetId": "hertel-fryer", "urgency": "urgent", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "Contains 'fire' but is not a fire: safety rule must not fire."
+  },
+  {
+    "id": "tune-14",
+    "category": "messy",
+    "input": { "type": "request", "siteId": "amherst", "text": "men's room toliet keeps running + the urinal is clogged lol" },
+    "expected": { "trade": "plumbing", "assetId": "amherst-restroom-mens", "urgency": "routine", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "Two problems, same asset."
+  },
+  {
+    "id": "tune-15",
+    "category": "messy",
+    "input": { "type": "request", "siteId": "cheektowaga", "text": "freezer door froze shut AGAIN cant get in to get product!!!" },
+    "expected": { "trade": "refrigeration", "assetId": "cheektowaga-walkin-freezer", "urgency": "urgent", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "Can't access product: blocks service. Low-budget site."
+  },
+  {
+    "id": "tune-16",
+    "category": "messy",
+    "input": { "type": "request", "siteId": "elmwood", "text": "AC up top for the kitchen is blowing warm, cooks are dying back there" },
+    "expected": { "trade": "hvac", "assetId": "elmwood-rtu-2", "urgency": "urgent", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "'dying' is a figure of speech; kitchen = rtu-2."
+  },
+  {
+    "id": "tune-17",
+    "category": "messy",
+    "input": { "type": "request", "siteId": "canalside", "text": "water heater making popping/banging noises when it kicks on" },
+    "expected": { "trade": "plumbing", "assetId": "canalside-water-heater", "urgency": "routine", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "Sediment noise; still producing hot water."
+  },
+  {
+    "id": "tune-18",
+    "category": "messy",
+    "input": { "type": "request", "siteId": "hertel", "text": "bugs?? little roaches near the dish pit floor drain" },
+    "expected": { "trade": "pest_control", "assetId": null, "urgency": "urgent", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "Pests in a food area; drain is not the dishwasher asset."
+  },
+  {
+    "id": "tune-19",
+    "category": "messy",
+    "input": { "type": "request", "siteId": "hertel", "text": "front dor wont close all the way, wind keeps blowing it open, cold in here" },
+    "expected": { "trade": "handyman", "assetId": "hertel-front-door", "urgency": "routine", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "Typos."
+  },
+  {
+    "id": "tune-20",
+    "category": "messy",
+    "input": { "type": "request", "siteId": "elmwood", "text": "outlet behind the bar is dead, blender wont turn on" },
+    "expected": { "trade": "electrical", "assetId": null, "urgency": "routine", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "No matching asset; not needsHuman."
+  },
+  {
+    "id": "tune-21",
+    "category": "emergency",
+    "input": { "type": "request", "siteId": "elmwood", "text": "It smells like gas in the basement by the water heater" },
+    "expected": { "trade": "plumbing", "assetId": "elmwood-water-heater", "urgency": "emergency", "duplicateOf": null, "needsHuman": false, "safetyEmergency": true },
+    "note": "Gas smell."
+  },
+  {
+    "id": "tune-22",
+    "category": "emergency",
+    "input": { "type": "request", "siteId": "canalside", "text": "Water is pouring through the ceiling in the dining room" },
+    "expected": { "trade": "plumbing", "assetId": null, "urgency": "emergency", "duplicateOf": null, "needsHuman": false, "safetyEmergency": true },
+    "note": "Water pouring / ceiling leak."
+  },
+  {
+    "id": "tune-23",
+    "category": "emergency",
+    "input": { "type": "request", "siteId": "hertel", "text": "sparks coming out of the fryer outlet when we plug it in" },
+    "expected": { "trade": "electrical", "assetId": "hertel-fryer", "urgency": "emergency", "duplicateOf": null, "needsHuman": false, "safetyEmergency": true },
+    "note": "Sparks."
+  },
+  {
+    "id": "tune-24",
+    "category": "emergency",
+    "input": { "type": "request", "siteId": "amherst", "text": "line cook slipped by the dish pit and got hurt, the dishwasher is leaking all over the floor" },
+    "expected": { "trade": "plumbing", "assetId": "amherst-dishwasher", "urgency": "emergency", "duplicateOf": null, "needsHuman": false, "safetyEmergency": true },
+    "note": "Someone hurt."
+  },
+  {
+    "id": "tune-25",
+    "category": "emergency",
+    "input": { "type": "request", "siteId": "cheektowaga", "text": "Smoke is coming out of the rooftop unit over the kitchen" },
+    "expected": { "trade": "hvac", "assetId": "cheektowaga-rtu-2", "urgency": "emergency", "duplicateOf": null, "needsHuman": false, "safetyEmergency": true },
+    "note": "Smoke. Low-budget site: needs budget increase, not needsHuman."
+  },
+  {
+    "id": "tune-26",
+    "category": "duplicate",
+    "input": { "type": "request", "siteId": "elmwood", "text": "the toilet in the upstairs mens bathroom is still running nonstop" },
+    "expected": { "trade": "plumbing", "assetId": "elmwood-restroom-mens", "urgency": "routine", "duplicateOf": "wo-seed-001", "needsHuman": false, "safetyEmergency": false },
+    "note": "Same asset, same problem, 20h old."
+  },
+  {
+    "id": "tune-27",
+    "category": "duplicate",
+    "input": { "type": "request", "siteId": "hertel", "text": "dish machine is full of standing water again, we're washing by hand" },
+    "expected": { "trade": "plumbing", "assetId": "hertel-dishwasher", "urgency": "urgent", "duplicateOf": "wo-seed-003", "needsHuman": false, "safetyEmergency": false },
+    "note": "Same asset, same problem, 10h old."
+  },
+  {
+    "id": "tune-28",
+    "category": "duplicate",
+    "input": { "type": "request", "siteId": "elmwood", "text": "fruit flies all over the bar again tonight, mostly by the drain" },
+    "expected": { "trade": "pest_control", "assetId": null, "urgency": "low", "duplicateOf": "wo-seed-005", "needsHuman": false, "safetyEmergency": false },
+    "note": "No asset: matched by area + trade."
+  },
+  {
+    "id": "tune-29",
+    "category": "duplicate",
+    "input": { "type": "request", "siteId": "elmwood", "text": "upstairs men's room toilet that was running is now overflowing, water on the floor" },
+    "expected": { "trade": "plumbing", "assetId": "elmwood-restroom-mens", "urgency": "urgent", "duplicateOf": "wo-seed-001", "needsHuman": false, "safetyEmergency": false },
+    "note": "Duplicate that got worse: merge and raise urgency routine -> urgent."
+  },
+  {
+    "id": "tune-30",
+    "category": "duplicate",
+    "input": { "type": "request", "siteId": "elmwood", "text": "sink faucet in the 2nd floor men's room won't shut off" },
+    "expected": { "trade": "plumbing", "assetId": "elmwood-restroom-mens", "urgency": "routine", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "Same asset as wo-seed-001 but a different problem: must NOT merge."
+  },
+  {
+    "id": "tune-31",
+    "category": "sensor",
+    "input": { "type": "sensor", "assetId": "elmwood-walkin-cooler", "metric": "temperature", "value": 42.5, "unit": "F" },
+    "expected": { "trade": "refrigeration", "assetId": "elmwood-walkin-cooler", "urgency": "urgent", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "1.5F past 41 (r=0.5)."
+  },
+  {
+    "id": "tune-32",
+    "category": "sensor",
+    "input": { "type": "sensor", "assetId": "hertel-walkin-freezer", "metric": "temperature", "value": 12, "unit": "F" },
+    "expected": { "trade": "refrigeration", "assetId": "hertel-walkin-freezer", "urgency": "emergency", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "7F past 5 (r=1.4)."
+  },
+  {
+    "id": "tune-33",
+    "category": "sensor",
+    "input": { "type": "sensor", "assetId": "amherst-walkin-cooler", "metric": "temperature", "value": 40.4, "unit": "F" },
+    "expected": { "trade": "refrigeration", "assetId": "amherst-walkin-cooler", "urgency": "urgent", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "Below threshold but trending up ~0.5F/day: crosses 41 in about 1 day."
+  },
+  {
+    "id": "tune-34",
+    "category": "sensor",
+    "input": { "type": "sensor", "assetId": "cheektowaga-water-heater", "metric": "temperature", "value": 104, "unit": "F" },
+    "expected": { "trade": "plumbing", "assetId": "cheektowaga-water-heater", "urgency": "urgent", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "6F below the 110 alert (r=0.6)."
+  },
+  {
+    "id": "tune-35",
+    "category": "needs_human",
+    "input": { "type": "request", "siteId": "hertel", "text": "the thing in the back is making a weird noise again" },
+    "expected": { "trade": "unknown", "assetId": null, "urgency": "routine", "duplicateOf": null, "needsHuman": true, "safetyEmergency": false },
+    "note": "Required case from the spec."
+  },
+  {
+    "id": "tune-36",
+    "category": "needs_human",
+    "input": { "type": "request", "siteId": "elmwood", "text": "it's broken again, same as last week" },
+    "expected": { "trade": "unknown", "assetId": null, "urgency": "routine", "duplicateOf": null, "needsHuman": true, "safetyEmergency": false },
+    "note": "No object at all."
+  },
+  {
+    "id": "tune-37",
+    "category": "needs_human",
+    "input": { "type": "request", "siteId": "amherst", "text": "one of the units on the roof is acting up" },
+    "expected": { "trade": "hvac", "assetId": null, "urgency": "routine", "duplicateOf": null, "needsHuman": true, "safetyEmergency": false },
+    "note": "Trade clear, but rtu-1 vs rtu-2 can't be told."
+  },
+  {
+    "id": "tune-38",
+    "category": "needs_human",
+    "input": { "type": "request", "siteId": "cheektowaga", "text": "can someone look at the cooler or the freezer, not sure which one is leaking water" },
+    "expected": { "trade": "refrigeration", "assetId": null, "urgency": "routine", "duplicateOf": null, "needsHuman": true, "safetyEmergency": false },
+    "note": "Trade clear, asset ambiguous between two."
+  },
+  {
+    "id": "tune-39",
+    "category": "spanish",
+    "input": { "type": "request", "siteId": "canalside", "text": "El inodoro del baño de mujeres está tapado y no funciona" },
+    "expected": { "trade": "plumbing", "assetId": "canalside-restroom-womens", "urgency": "routine", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "Spanish; summary must be in English."
+  },
+  {
+    "id": "tune-40",
+    "category": "spanish",
+    "input": { "type": "request", "siteId": "hertel", "text": "La máquina de hielo no está haciendo hielo otra vez" },
+    "expected": { "trade": "refrigeration", "assetId": "hertel-ice-machine", "urgency": "routine", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": "Spanish; also the repeat-issue asset."
+  }
+]

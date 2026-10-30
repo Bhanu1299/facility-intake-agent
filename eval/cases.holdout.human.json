@@ -1,0 +1,80 @@
+[
+  {
+    "id": "holdout-human-example",
+    "example": true,
+    "category": "duplicate",
+    "input": { "type": "request", "siteId": "amherst", "text": "front door still slamming shut, the closer arm is hanging off" },
+    "expected": { "trade": "handyman", "assetId": "amherst-front-door", "urgency": "routine", "duplicateOf": "wo-seed-004", "needsHuman": false, "safetyEmergency": false },
+    "note": "EXAMPLE ONLY (skipped by the runner). Same problem as open work order wo-seed-004."
+  },
+  {
+    "id": "holdout-human-01",
+    "category": "easy",
+    "input": { "type": "request", "siteId": "", "text": "" },
+    "expected": { "trade": "", "assetId": null, "urgency": "", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": ""
+  },
+  {
+    "id": "holdout-human-02",
+    "category": "easy",
+    "input": { "type": "request", "siteId": "", "text": "" },
+    "expected": { "trade": "", "assetId": null, "urgency": "", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": ""
+  },
+  {
+    "id": "holdout-human-03",
+    "category": "messy",
+    "input": { "type": "request", "siteId": "", "text": "" },
+    "expected": { "trade": "", "assetId": null, "urgency": "", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": ""
+  },
+  {
+    "id": "holdout-human-04",
+    "category": "messy",
+    "input": { "type": "request", "siteId": "", "text": "" },
+    "expected": { "trade": "", "assetId": null, "urgency": "", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": ""
+  },
+  {
+    "id": "holdout-human-05",
+    "category": "messy",
+    "input": { "type": "request", "siteId": "", "text": "" },
+    "expected": { "trade": "", "assetId": null, "urgency": "", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": ""
+  },
+  {
+    "id": "holdout-human-06",
+    "category": "emergency",
+    "input": { "type": "request", "siteId": "", "text": "" },
+    "expected": { "trade": "", "assetId": null, "urgency": "emergency", "duplicateOf": null, "needsHuman": false, "safetyEmergency": true },
+    "note": ""
+  },
+  {
+    "id": "holdout-human-07",
+    "category": "emergency",
+    "input": { "type": "request", "siteId": "", "text": "" },
+    "expected": { "trade": "", "assetId": null, "urgency": "emergency", "duplicateOf": null, "needsHuman": false, "safetyEmergency": true },
+    "note": ""
+  },
+  {
+    "id": "holdout-human-08",
+    "category": "duplicate",
+    "input": { "type": "request", "siteId": "", "text": "" },
+    "expected": { "trade": "", "assetId": null, "urgency": "", "duplicateOf": "", "needsHuman": false, "safetyEmergency": false },
+    "note": ""
+  },
+  {
+    "id": "holdout-human-09",
+    "category": "needs_human",
+    "input": { "type": "request", "siteId": "", "text": "" },
+    "expected": { "trade": "", "assetId": null, "urgency": "", "duplicateOf": null, "needsHuman": true, "safetyEmergency": false },
+    "note": ""
+  },
+  {
+    "id": "holdout-human-10",
+    "category": "spanish",
+    "input": { "type": "request", "siteId": "", "text": "" },
+    "expected": { "trade": "", "assetId": null, "urgency": "", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
+    "note": ""
+  }
+]
