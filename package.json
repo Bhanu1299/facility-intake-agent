@@ -20,7 +20,8 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "seed": "npm run seed -w server"
+    "seed": "npm run seed -w server",
+    "eval": "npm run eval -w server --"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

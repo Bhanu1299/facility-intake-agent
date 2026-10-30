@@ -9,3 +9,4 @@ coverage/
 .vercel
 eval/report-*.tmp.md
 .playwright-mcp/
+eval/report-*-partial.md
