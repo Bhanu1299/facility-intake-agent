@@ -9,6 +9,7 @@ import { demoRouter } from './routes/demo';
 import { activityRouter, proposalsRouter } from './routes/proposals';
 import { demoRateLimit } from './routes/rateLimit';
 import { PipelineRunner, signalsRouter } from './routes/signals';
+import { getAutonomyMode, settingsRouter, workOrdersRouter } from './routes/workOrders';
 
 /** Without a key the app still runs; every model call fails honestly and proposals need a human. */
 const noKeyClient: LlmClient = {
@@ -44,11 +45,12 @@ export function createApp(env: Env, deps: AppDeps = {}): App {
   app.use(cors({ origin: corsOrigins(env) }));
   app.use(express.json({ limit: '100kb' }));
 
-  app.get('/api/health', (_req, res) => {
+  app.get('/api/health', async (_req, res) => {
+    const db = dbState();
     const body: HealthResponse = {
       status: 'ok',
-      db: dbState(),
-      autonomyMode: env.AUTONOMY_MODE,
+      db,
+      autonomyMode: db === 'connected' ? await getAutonomyMode() : env.AUTONOMY_MODE,
       version: process.env.npm_package_version ?? '0.1.0',
     };
     res.json(body);
@@ -61,6 +63,8 @@ export function createApp(env: Env, deps: AppDeps = {}): App {
   app.use('/api', signalsRouter(pipelines, limiter));
   app.use('/api', proposalsRouter());
   app.use('/api', activityRouter());
+  app.use('/api', workOrdersRouter());
+  app.use('/api', settingsRouter());
   app.use('/api/demo', demoRouter(env, limiter));
 
   app.use('/api', (_req, res) => {
