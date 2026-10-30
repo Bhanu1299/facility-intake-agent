@@ -8,3 +8,4 @@ coverage/
 .DS_Store
 .vercel
 eval/report-*.tmp.md
+.playwright-mcp/

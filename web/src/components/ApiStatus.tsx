@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { HealthResponse } from '@fia/shared';
-import { getHealth } from '../api';
+import { api } from '../api';
 
 type State = { kind: 'loading' } | { kind: 'ok'; health: HealthResponse } | { kind: 'error' };
 
@@ -10,7 +10,8 @@ export function ApiStatus() {
 
   useEffect(() => {
     let cancelled = false;
-    getHealth()
+    api
+      .health()
       .then((health) => !cancelled && setState({ kind: 'ok', health }))
       .catch(() => !cancelled && setState({ kind: 'error' }));
     return () => {
