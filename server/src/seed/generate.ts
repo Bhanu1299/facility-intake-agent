@@ -206,6 +206,7 @@ export function generateSeedData(now: Date = new Date(), seed = 42): SeedData {
       total: site.budgetTotal,
       committed,
       spent,
+      appliedCommits: [],
     };
   });
 

@@ -128,6 +128,8 @@ export interface BudgetDoc {
   total: number;
   committed: number;
   spent: number;
+  /** Commitment keys already applied (e.g. "create:wo_x"), so approvals never double-commit. */
+  appliedCommits: string[];
 }
 
 export const BudgetModel = model<BudgetDoc>(
@@ -139,6 +141,7 @@ export const BudgetModel = model<BudgetDoc>(
       total: { type: Number, required: true },
       committed: { type: Number, required: true, min: 0 },
       spent: { type: Number, required: true, min: 0 },
+      appliedCommits: { type: [String], default: [] },
     },
     { collection: 'budgets', versionKey: false },
   ),
