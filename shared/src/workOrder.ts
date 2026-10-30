@@ -1,11 +1,12 @@
 import { z } from 'zod';
-import { Trade, Urgency, WorkOrderStatus } from './enums';
+import { Trade, TradeOrUnknown, Urgency, WorkOrderStatus } from './enums';
 
 /** The fields a manager sees and can edit before approving. One shape for proposal and work order. */
 export const WorkOrderDraft = z.object({
   siteId: z.string().min(1),
   assetId: z.string().nullable(),
-  trade: Trade,
+  /** `unknown` only on drafts that need a human; approval requires a real trade. */
+  trade: TradeOrUnknown,
   title: z.string().trim().min(1).max(200),
   description: z.string().trim().max(4000),
   locationText: z.string().trim().max(300),
@@ -30,6 +31,7 @@ export const DispatchEmail = z.object({
 export type DispatchEmail = z.infer<typeof DispatchEmail>;
 
 export const WorkOrder = WorkOrderDraft.extend({
+  trade: Trade,
   id: z.string(),
   number: z.string(),
   status: WorkOrderStatus,

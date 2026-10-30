@@ -46,9 +46,19 @@ export const TokenUsage = z.object({
 });
 export type TokenUsage = z.infer<typeof TokenUsage>;
 
+export const VerifyCheck = z.object({
+  name: z.string(),
+  passed: z.boolean(),
+  detail: z.string(),
+});
+export type VerifyCheck = z.infer<typeof VerifyCheck>;
+
 export const Proposal = z.object({
   id: z.string(),
   signalId: z.string(),
+  signalType: z.enum(['request', 'sensor']),
+  /** What came in: the request text, or the sensor reading in words. */
+  inputText: z.string(),
   status: ProposalStatus,
   /** `merge` = attach this report to an existing open work order instead of creating one. */
   action: z.enum(['create', 'merge']),
@@ -65,6 +75,10 @@ export const Proposal = z.object({
   needsHumanReason: z.string().nullable(),
   clarifyingQuestion: z.string().nullable(),
   confidence: z.number().min(0).max(1),
+  /** Results of the verify step, shown to the manager. */
+  checks: z.array(VerifyCheck),
+  /** Vendors removed by hard filters, with the reason. */
+  excludedVendors: z.array(z.object({ name: z.string(), reason: z.string() })),
   modelUsed: z.string().nullable(),
   escalated: z.boolean(),
   latencyMs: z.number().nonnegative(),
