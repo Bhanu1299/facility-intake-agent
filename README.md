@@ -1,34 +1,205 @@
-# facility-intake-agent
+# Intake Agent (facility-intake-agent)
 
-Prototype: messy maintenance requests and sensor alerts become draft work orders that a manager
-approves before anything happens. Product name in the UI: **Intake Agent**.
+Restaurant staff report problems the way people actually talk ("walk in is warm again", "huele a
+gas cerca de la freidora"), and sensors send raw readings. **Intake Agent** turns each one into a
+draft work order: it works out the trade, the asset and the urgency, checks for duplicates and
+repeat failures, sets a not-to-exceed amount within the site's budget, ranks compliant vendors,
+and drafts the dispatch email. Nothing happens until a manager approves it. Every step and every
+human action is written to an Activity Log.
 
-> Work in progress. The full README (architecture, eval results, privacy, how this plugs into an
-> existing assistant) lands in Phase 8.
+- **Live demo:** https://facility-intake-agent.vercel.app _(free hosting: the first request after
+  idle can take about a minute while the API wakes up)_
+- **90-second video:** _link placeholder_
 
-## Run locally
+All data is fake. "Harbor & Hearth Kitchen" and every vendor are fictional.
+
+## Built as a proposal for LeanSite
+
+Built as a proposal for LeanSite. Vera's Phase 1 answers questions and advises. This prototype
+shows a Phase 2 step: the agent drafts actions and a human approves each one. It is designed to fit
+how Vera is publicly described. It does not claim to match Vera's internal architecture, which I
+haven't seen.
+
+## Architecture
+
+```mermaid
+flowchart TD
+    QR["QR request page<br/>(any language)"] --> API
+    SENSOR["Sensor reading"] --> API
+    API["POST /api/signals<br/>202 Accepted"] --> N
+
+    subgraph Pipeline["Pipeline (runs async)"]
+        N["1 Normalize<br/>store signal, sensor trend math"] --> U
+        U["2 Understand<br/>small model, strict JSON"] --> S
+        S["3 Safety rules (code)<br/>gas / smoke / fire / flood / injury → Emergency"] --> G
+        G["4 Ground<br/>asset exists? duplicate in 72h? 3+ repairs in 90d?"] --> P
+        P["5 Plan<br/>NTE table capped at Available<br/>vendor filters + 40/30/20/10 score"] --> V
+        V{"6 Verify<br/>confidence ≥ 0.7 and all checks pass?"}
+        V -- no --> BIG["Re-run 2–5 with big model"] --> V2{"confidence ≥ 0.6,<br/>asset + trade known?"}
+        V -- yes --> PR
+        V2 -- yes --> PR
+        V2 -- no --> NH["Flag: needs a human<br/>+ clarifying question"] --> PR
+        PR["7 Propose<br/>draft work order or merge"]
+    end
+
+    PR --> INBOX["Inbox: manager reviews"]
+    INBOX -- "Edit" --> INBOX
+    INBOX -- "Reject (reason required)" --> LOG
+    INBOX -- "Approve (idempotent)" --> GATE
+
+    subgraph Gate["Approval gate"]
+        GATE["Create work order or merge note"] --> BUD["Commit NTE to budget<br/>(single conditional update)"]
+        BUD --> EMAIL["Draft dispatch email<br/>(stored, never sent)"]
+    end
+
+    EMAIL --> WO["Work order: dispatched"]
+    Pipeline -. every step .-> LOG[("Activity Log")]
+    Gate -. every action .-> LOG
+```
+
+The model only does step 2 (and a yes/no "same problem?" question in step 4). Everything with
+money, safety or compliance (NTE, budget, vendor insurance and hours, the safety override) is plain
+code with unit tests, so a model mistake can't skip a rule.
+
+Stack: TypeScript everywhere, npm workspaces (`shared` zod schemas, `server` Express + Mongoose,
+`web` React + Vite + Tailwind), Groq through the OpenAI SDK with strict structured outputs
+(`openai/gpt-oss-20b` first, `openai/gpt-oss-120b` on escalation).
+
+## How this plugs into Vera
+
+**One way in.** Every input goes to `POST /api/signals`:
+
+```jsonc
+{ "type": "request", "siteId": "elmwood", "text": "toilet in the mens room is running again" }
+{ "type": "sensor", "assetId": "amherst-walkin-cooler", "metric": "temperature", "value": 41.8, "unit": "F" }
+```
+
+Vera's chat, a QR page, a sensor gateway or an email parser would all post here. The response is
+`202 { signalId }`, and the result shows up as a proposal.
+
+**Action tools Vera would call.** Each one is an approval-gated endpoint, safe to retry:
+
+| Tool                             | Endpoint                          | What it does                                                                                                        |
+| -------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Read proposal                    | `GET /api/proposals/:id`          | Draft, reasons, vendors, budget check, checks run                                                                   |
+| Edit draft                       | `PATCH /api/proposals/:id`        | Change trade, asset, urgency, NTE, vendor… (logged)                                                                 |
+| **Create work order + dispatch** | `POST /api/proposals/:id/approve` | For a `create` proposal: creates the work order, **commits the budget**, drafts the vendor email, sets `dispatched` |
+| **Merge**                        | `POST /api/proposals/:id/approve` | For a `merge` proposal: adds the report to the open work order; commits only the extra NTE if urgency went up       |
+| Reject                           | `POST /api/proposals/:id/reject`  | Requires a reason                                                                                                   |
+| Audit                            | `GET /api/activity?proposalId=…`  | Every step and human action                                                                                         |
+
+Approve is idempotent. Calling it twice, or from two tabs at once, gives one work order and one
+budget commit.
+
+**Where the autonomy setting lives.** One server-side setting, `GET/PUT /api/settings/autonomy`
+(stored in MongoDB, default from `AUTONOMY_MODE`). The server enforces it. The UI only shows it,
+so a client can't bypass it.
+
+## Autonomy dial
+
+| Dial        | Vera phase | Behavior here                                                                                                                                                      |
+| ----------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Advise**  | Phase 1    | The agent still analyzes everything, but proposals are marked advisory and approve returns `409`. Nothing can be dispatched until the dial moves to Propose.       |
+| **Propose** | Phase 2    | **This prototype.** The agent drafts each action; a manager approves, edits or rejects every one.                                                                  |
+| **Auto**    | Phase 3    | Shown but disabled (`409` from the API). Auto-approval would need a track record from the eval and the Activity Log first, plus limits such as NTE caps per trade. |
+
+## Eval results
+
+Test cases and expected answers were written by the author. There are 60 labeled cases, all
+written before any prompt existed: 40 for tuning, and a 20-case holdout (10 AI-written, 10
+written by a human reviewer) that was never used for tuning.
+
+**Holdout: pending.** It runs once, after the 10 human-written cases are filled in, and its numbers
+replace this paragraph. The report will be `eval/report-holdout.md`.
+
+**Tune set** (`eval/report-tune.md`, the prompt as committed):
+
+| Metric                           | Result                         |
+| -------------------------------- | ------------------------------ |
+| Safety recall (must be 100%)     | **100% (5/5)**, 0 false alarms |
+| Trade                            | 97.5% (39/40)                  |
+| Asset                            | 97.5% (39/40)                  |
+| Urgency exact / within one level | 77.5% / 100%                   |
+| Urgency under-calls              | 2.5% (1/40)                    |
+| Duplicates (precision / recall)  | 100% / 100% (4/4)              |
+| Needs-human (precision / recall) | 100% / 100% (4/4)              |
+| Escalated to the big model       | 10%                            |
+| Latency avg / p95                | 0.87 s / 1.8 s                 |
+| Tokens / cost per request        | ~1,570 tokens / ~$0.0002       |
+
+What tuning showed (three full runs, tune set only):
+
+- Safety, trade, duplicates and needs-human were right in every run. The misses are almost all
+  urgency borderlines, such as whether a slow ice machine is routine or urgent.
+- Results move by about ±2 cases between identical runs even at temperature 0, so small prompt
+  changes can't be told apart from noise with 40 cases.
+- Run 1 (base prompt): 30/40 with 2 under-calls. Run 2 (added "start from routine" rules): 30/40
+  with 1 under-call. Run 3 (rules as an ordered checklist): 29/40 with **6 under-calls**. The
+  committed prompt is run 2's, because under-calling an urgent problem costs more than over-calling
+  it.
+
+## Privacy
+
+- **Runs entirely on your infrastructure, with your database and your API key.** The server only
+  talks to its own MongoDB and the configured LLM endpoint. There is no analytics, tracking or
+  telemetry of any kind, on the server or in the web app.
+- **The model sees as little as possible:** the request text (or the sensor reading in words), the
+  site name and that site's asset list (id, name, location). For the duplicate check it sees the
+  new report and the open work order's title, description and location, and answers yes or no. Budgets,
+  vendor prices, vendor details and repair history never go to the model.
+- **Keys come only from env.** `.env` is git-ignored. The Groq key lives on the server only and is
+  never sent to the browser.
+- **Recommended:** turn on Groq **Zero Data Retention** in the Groq console under Data Controls.
+- **Private mode:** gpt-oss is open-weight, so you can run it on your own server behind any
+  OpenAI-compatible endpoint (vLLM, Ollama, etc.) and set `LLM_BASE_URL`, `LLM_MODEL_SMALL` and
+  `LLM_MODEL_BIG`. Then no request data leaves your network. **Private mode is supported by
+  configuration but was not tested in this prototype.**
+
+## Run locally, seed, test, eval
 
 Requires Node 22 (`nvm use`).
 
 ```bash
 npm install
-cp .env.example .env   # add GROQ_API_KEY; leave MONGODB_URI empty for an in-memory DB
-npm run dev            # API on :4000, web on :5173 (proxies /api)
+cp .env.example .env     # add GROQ_API_KEY; leave MONGODB_URI empty for an in-memory DB
+npm run dev              # API on :4000 (auto-seeds), web on :5173 (proxies /api)
 ```
 
-## Checks
+Open http://localhost:5173. Try `/r/elmwood` (the QR page) and the Sensor simulator.
 
-```bash
-npm test          # Jest (shared + server, uses mongodb-memory-server)
-npm run typecheck
-npm run lint
-npm run build
-```
+| Command                                | What it does                                                                                                                              |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run seed`                         | Wipes and reseeds the database in `MONGODB_URI` (5 sites, 55 assets, 13 vendors, 100 closed + 6 open work orders, 14 days of sensor data) |
+| _Reset demo_ button                    | Same reset from the UI (`POST /api/demo/reset`)                                                                                           |
+| `npm test`                             | Jest unit and API tests. No LLM calls (the model client is faked); MongoDB runs in memory                                                 |
+| `npm run eval -- --set tune`           | Runs the 40 tune cases through the real pipeline on Groq and writes `eval/report-tune.md`                                                 |
+| `npm run eval -- --set holdout`        | The 20 holdout cases (10 AI-written, 10 human-written). Reports AI, human and combined scores. Run once                                   |
+| `npm run lint` / `typecheck` / `build` | The usual                                                                                                                                 |
 
-## Deploy
+The eval always uses its own in-memory database (it ignores `MONGODB_URI`) and reseeds before
+every case. It is paced for the Groq free tier (about 7K tokens and 25 requests per minute per
+model; override with `EVAL_TPM` / `EVAL_RPM`), and 429s are retried with backoff. It exits non-zero
+if safety recall is below 100%.
 
-- **API:** Render free web service, defined in `render.yaml` (Blueprint).
-- **Web:** Vercel, configured by `vercel.json` (set `VITE_API_URL` to the Render URL).
-- **DB:** MongoDB Atlas free cluster.
+Environment variables are listed in `.env.example`. `DEMO_RATE_LIMIT_PER_HOUR` (default 20) limits
+signal submissions and resets per IP.
 
-Free hosts sleep when idle; the first request after a while can take about a minute.
+**Deploy (free tiers):** API on Render (`render.yaml`), web on Vercel (`vercel.json`, Root
+Directory = repo root, `VITE_API_URL` = the Render URL), MongoDB Atlas free cluster. Pushing to
+`main` redeploys both.
+
+## Known limits
+
+- **Fake data.** Sites, assets, vendors, budgets, history and sensor readings are generated.
+- **Author-written test cases.** The tune set and half the holdout were written by the same author
+  who wrote the prompts. The other 10 holdout cases were written by a human reviewer.
+- **Private mode is untested.** It is supported by configuration only.
+- **Dispatch emails are not sent.** They are drafted, stored on the work order and shown as
+  "Draft — not sent".
+- **Free hosting sleeps.** Render's free tier spins down after 15 minutes idle, so the first
+  request can take about a minute. Atlas free clusters pause after long inactivity.
+- **Demo data ages.** The seeded open work orders are placed 10–120 hours before the seed time, and
+  duplicate detection only looks back 72 hours. On the live demo, press **Reset demo** before
+  trying the duplicate examples.
+- No auth or roles, a single tenant, no PII scrubbing, and no real IoT integration (out of scope).
+  Work orders stop at `dispatched`; vendor acceptance and completion aren't modeled.
