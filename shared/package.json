@@ -1,0 +1,19 @@
+{
+  "name": "@fia/shared",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Zod schemas shared by server and web: the single source of truth for data shapes.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "jest"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
+  }
+}
