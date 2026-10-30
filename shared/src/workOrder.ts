@@ -37,6 +37,8 @@ export const WorkOrder = WorkOrderDraft.extend({
   /** Free-text notes, e.g. merged duplicate reports. */
   notes: z.array(z.string()),
   dispatchEmail: DispatchEmail.nullable(),
+  /** Final invoiced cost once completed (moves from Committed to Spent). */
+  actualCost: z.number().nonnegative().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
   closedAt: z.string().nullable(),
