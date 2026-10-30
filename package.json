@@ -1,0 +1,39 @@
+{
+  "name": "facility-intake-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Turns maintenance requests and sensor alerts into draft work orders a manager approves.",
+  "workspaces": [
+    "shared",
+    "server",
+    "web"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "npm run build -w shared && npm run build -w server && npm run build -w web",
+    "dev": "npm run build -w shared && concurrently -n server,web -c blue,magenta \"npm run dev -w server\" \"npm run dev -w web\"",
+    "start": "npm run start -w server",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^22.20.5",
+    "concurrently": "^10.0.6",
+    "eslint": "^10.14.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.13.0",
+    "jest": "^30.5.2",
+    "prettier": "^3.9.10",
+    "ts-jest": "^29.4.15",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.72.1"
+  }
+}
