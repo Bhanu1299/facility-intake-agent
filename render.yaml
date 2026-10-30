@@ -1,0 +1,37 @@
+# Render Blueprint: API server (Express) on the free plan.
+# Free instances sleep after 15 minutes idle; the first request after that takes about a minute.
+services:
+  - type: web
+    name: facility-intake-agent-api
+    runtime: node
+    plan: free
+    # Same metro as an Atlas cluster in AWS us-east-1 (N. Virginia).
+    region: virginia
+    branch: main
+    autoDeployTrigger: commit
+    # Dev deps are needed to compile TypeScript; skip downloading the test-only MongoDB binary.
+    buildCommand: MONGOMS_DISABLE_POSTINSTALL=1 npm ci --include=dev && npm run build -w shared && npm run build -w server
+    startCommand: npm run start -w server
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: '22'
+      - key: NODE_ENV
+        value: production
+      - key: LLM_BASE_URL
+        value: https://api.groq.com/openai/v1
+      - key: LLM_MODEL_SMALL
+        value: openai/gpt-oss-20b
+      - key: LLM_MODEL_BIG
+        value: openai/gpt-oss-120b
+      - key: AUTONOMY_MODE
+        value: propose
+      - key: DEMO_RATE_LIMIT_PER_HOUR
+        value: '20'
+      # Secrets and deploy-specific values: Render prompts for these when the Blueprint is created.
+      - key: GROQ_API_KEY
+        sync: false
+      - key: MONGODB_URI
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
