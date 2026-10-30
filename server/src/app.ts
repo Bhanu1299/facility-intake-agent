@@ -3,6 +3,9 @@ import cors from 'cors';
 import type { HealthResponse } from '@fia/shared';
 import { corsOrigins, type Env } from './env';
 import { dbState } from './db';
+import { catalogRouter } from './routes/catalog';
+import { demoRouter } from './routes/demo';
+import { demoRateLimit } from './routes/rateLimit';
 
 export function createApp(env: Env): express.Express {
   const app = express();
@@ -22,6 +25,12 @@ export function createApp(env: Env): express.Express {
     };
     res.json(body);
   });
+
+  // One shared per-IP budget for everything that calls the LLM or resets demo state.
+  const limiter = demoRateLimit(env.DEMO_RATE_LIMIT_PER_HOUR);
+
+  app.use('/api', catalogRouter());
+  app.use('/api/demo', demoRouter(env, limiter));
 
   app.use('/api', (_req, res) => {
     res.status(404).json({ error: 'Not found' });
