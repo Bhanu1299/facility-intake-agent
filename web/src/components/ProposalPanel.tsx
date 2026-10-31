@@ -120,6 +120,16 @@ function ProposalBody({ proposal: p, onChanged }: { proposal: Proposal; onChange
   const siteAssets = assets.filter((a) => a.siteId === p.draft.siteId);
   const budget = budgets.find((b) => b.siteId === p.draft.siteId);
   const asset = assets.find((a) => a.id === form.assetId);
+  // Fields approval needs. The asset is required only when the agent could not tell which one.
+  const assetNeeded = p.checks.some((c) => c.name === 'Asset resolved' && !c.passed);
+  const missing = [
+    form.trade === 'unknown' && 'set the trade',
+    assetNeeded && !form.assetId && 'pick the asset',
+    !form.vendorId && 'choose a vendor',
+  ].filter((m): m is string => Boolean(m));
+  const blockedReason = missing.length
+    ? `To approve, ${missing.join(', ')}${editing ? '' : ' (use Edit)'}.`
+    : null;
 
   const vendorOptions = useMemo(() => {
     const top = p.vendors.map((v) => v.vendorId);
@@ -525,7 +535,7 @@ function ProposalBody({ proposal: p, onChanged }: { proposal: Proposal; onChange
               <Button
                 variant="primary"
                 onClick={approve}
-                disabled={adviseMode || busy !== null}
+                disabled={adviseMode || busy !== null || blockedReason !== null}
                 title={adviseMode ? 'Advise mode: approvals are off' : undefined}
               >
                 {busy === 'approve'
@@ -539,11 +549,24 @@ function ProposalBody({ proposal: p, onChanged }: { proposal: Proposal; onChange
                   Edit
                 </Button>
               )}
-              <Button variant="danger" onClick={() => setRejecting(true)} disabled={busy !== null}>
+              <Button
+                variant="danger"
+                onClick={() => {
+                  setError(null);
+                  setRejecting(true);
+                }}
+                disabled={busy !== null}
+              >
                 Reject
               </Button>
-              {adviseMode && (
+              {adviseMode ? (
                 <span className="text-xs text-slate-500">Advise mode: approvals are off.</span>
+              ) : (
+                blockedReason && (
+                  <p className="w-full text-sm text-amber-800" role="status">
+                    {blockedReason}
+                  </p>
+                )
               )}
             </div>
           )}
