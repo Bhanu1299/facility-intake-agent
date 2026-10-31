@@ -15,9 +15,10 @@ import { logActivity } from '../activity';
 import { newId } from '../ids';
 import type { LlmClient } from '../llm/client';
 import {
+  addSensorReading,
   AssetModel,
   BudgetModel,
-  SensorReadingModel,
+  findSensorReadings,
   SiteModel,
   VendorModel,
   type AssetDoc,
@@ -268,7 +269,7 @@ async function normalize(
     const spec = sensorAsset?.sensor;
     if (!sensorAsset || !spec) throw new SignalInputError(`Asset ${input.assetId} has no sensor`);
     const readingAt = input.readingAt ? new Date(input.readingAt) : now;
-    await SensorReadingModel.create({
+    await addSensorReading({
       assetId: sensorAsset._id,
       siteId: site._id,
       metric: input.metric,
@@ -277,12 +278,7 @@ async function normalize(
       readingAt,
     });
     const since = new Date(readingAt.getTime() - SENSOR_HISTORY_HOURS * 3_600_000);
-    const history = await SensorReadingModel.find({
-      assetId: sensorAsset._id,
-      readingAt: { $gte: since, $lte: readingAt },
-    })
-      .sort({ readingAt: 1 })
-      .lean();
+    const history = await findSensorReadings(sensorAsset._id, since, readingAt);
     sensor = assessSensor(
       spec,
       { at: readingAt, value: input.value },

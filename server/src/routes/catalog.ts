@@ -3,7 +3,7 @@ import type { Budget } from '@fia/shared';
 import {
   AssetModel,
   BudgetModel,
-  SensorReadingModel,
+  findSensorReadings,
   SiteModel,
   VendorModel,
 } from '../models/catalog';
@@ -59,11 +59,8 @@ export function catalogRouter(): Router {
     }
     const hours = Math.min(Math.max(Number(req.query.hours) || 48, 1), 14 * 24);
     const since = new Date(Date.now() - hours * 3_600_000);
-    const readings = await SensorReadingModel.find({ assetId, readingAt: { $gte: since } })
-      .sort({ readingAt: 1 })
-      .select({ _id: 0, assetId: 1, metric: 1, value: 1, unit: 1, readingAt: 1 })
-      .lean();
-    res.json(readings);
+    const readings = await findSensorReadings(assetId, since);
+    res.json(readings.map(({ siteId: _siteId, ...r }) => r));
   });
 
   router.get('/budgets', async (_req, res) => {

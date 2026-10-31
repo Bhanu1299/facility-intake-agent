@@ -147,6 +147,7 @@ export const BudgetModel = model<BudgetDoc>(
   ),
 );
 
+/** One reading, as callers see it. Stored inside per-asset, per-day buckets (below). */
 export interface SensorReadingDoc {
   assetId: string;
   siteId: string;
@@ -156,17 +157,95 @@ export interface SensorReadingDoc {
   readingAt: Date;
 }
 
-const SensorReadingSchema = new Schema<SensorReadingDoc>(
+/**
+ * Bucket pattern: one document per asset per UTC day holding that day's readings. 14 days of
+ * hourly readings for 25 sensors is ~375 documents instead of ~8,400, which keeps the demo
+ * reset fast on a shared cluster.
+ */
+export interface SensorBucketDoc {
+  assetId: string;
+  siteId: string;
+  metric: SensorSpec['metric'];
+  unit: SensorSpec['unit'];
+  /** UTC midnight of the day the readings belong to. */
+  day: Date;
+  readings: { at: Date; value: number }[];
+}
+
+const SensorBucketSchema = new Schema<SensorBucketDoc>(
   {
     assetId: { type: String, required: true },
     siteId: { type: String, required: true },
     metric: { type: String, enum: SENSOR_METRICS, required: true },
     unit: { type: String, enum: SENSOR_UNITS, required: true },
-    value: { type: Number, required: true },
-    readingAt: { type: Date, required: true },
+    day: { type: Date, required: true },
+    readings: { type: [{ _id: false, at: Date, value: Number }], default: [] },
   },
-  { collection: 'sensor_readings', versionKey: false },
+  { collection: 'sensor_buckets', versionKey: false },
 );
-SensorReadingSchema.index({ assetId: 1, readingAt: -1 });
+SensorBucketSchema.index({ assetId: 1, day: 1 }, { unique: true });
 
-export const SensorReadingModel = model<SensorReadingDoc>('SensorReading', SensorReadingSchema);
+export const SensorBucketModel = model<SensorBucketDoc>('SensorBucket', SensorBucketSchema);
+
+const DAY_MS = 86_400_000;
+const utcDay = (d: Date): Date => new Date(Math.floor(d.getTime() / DAY_MS) * DAY_MS);
+
+/** Groups flat readings into day buckets (used by the seed). */
+export function bucketReadings(readings: readonly SensorReadingDoc[]): SensorBucketDoc[] {
+  const buckets = new Map<string, SensorBucketDoc>();
+  for (const r of readings) {
+    const day = utcDay(r.readingAt);
+    const key = `${r.assetId}|${day.getTime()}`;
+    let b = buckets.get(key);
+    if (!b) {
+      b = {
+        assetId: r.assetId,
+        siteId: r.siteId,
+        metric: r.metric,
+        unit: r.unit,
+        day,
+        readings: [],
+      };
+      buckets.set(key, b);
+    }
+    b.readings.push({ at: r.readingAt, value: r.value });
+  }
+  return [...buckets.values()];
+}
+
+/** Appends one reading to its day's bucket, creating the bucket if needed. */
+export async function addSensorReading(r: SensorReadingDoc): Promise<void> {
+  await SensorBucketModel.updateOne(
+    { assetId: r.assetId, day: utcDay(r.readingAt) },
+    {
+      $push: { readings: { at: r.readingAt, value: r.value } },
+      $setOnInsert: { siteId: r.siteId, metric: r.metric, unit: r.unit },
+    },
+    { upsert: true },
+  );
+}
+
+/** Readings for one asset with `from <= readingAt <= to`, oldest first. */
+export async function findSensorReadings(
+  assetId: string,
+  from: Date,
+  to: Date = new Date(8.64e15),
+): Promise<SensorReadingDoc[]> {
+  const buckets = await SensorBucketModel.find({
+    assetId,
+    day: { $gte: utcDay(from), $lte: to },
+  }).lean();
+  return buckets
+    .flatMap((b) =>
+      b.readings.map((r) => ({
+        assetId: b.assetId,
+        siteId: b.siteId,
+        metric: b.metric,
+        unit: b.unit,
+        value: r.value,
+        readingAt: r.at,
+      })),
+    )
+    .filter((r) => r.readingAt >= from && r.readingAt <= to)
+    .sort((a, b) => a.readingAt.getTime() - b.readingAt.getTime());
+}
