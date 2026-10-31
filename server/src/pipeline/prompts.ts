@@ -33,8 +33,10 @@ Fields:
   - Start from routine. Go up to urgent only if service or food safety is hurt today with no easy workaround. Go up to emergency only for active danger.
   - Equipment that still works but is noisy, slow or weak is routine (ice machine making little or no ice: ice can be bought; water heater banging; one dead outlet with other outlets nearby).
   - Water from a single fixture that can be shut off (a toilet overflowing, a sink backing up) is urgent. Emergency is water spreading uncontrolled, pouring, or coming through a ceiling.
+  - An active leak (water escaping onto the floor or counter) that the reporter stresses ("leaking bad", "a lot", "!!") is urgent: someone needs to come today. A small leak from equipment that still works ("leaking a little") is routine, and a drip is low.
+  - A fixture that runs nonstop or won't shut off but still drains normally (a running toilet, a faucet that won't turn off) is routine: water is wasted, not spreading.
   - A door that won't close or latch is routine (security and heat loss), not low.
-  - Pests are urgent only when they are in the kitchen or food storage; elsewhere they are routine or low.
+  - Any mouse, rat or roach in a food area (kitchen, dish pit including its drains, walk-ins, dry storage, pantry) is urgent, even a single sighting: that is a food-safety problem today. Rodents or roaches away from food are routine. Fruit flies are the exception: a few around a drain are low.
   - If you cannot tell what is broken, use routine.
 - urgencyReason: one sentence explaining the urgency.
 - confidence: 0 to 1, how sure you are about trade, asset and urgency together.

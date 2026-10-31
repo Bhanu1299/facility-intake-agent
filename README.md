@@ -117,17 +117,17 @@ replace this paragraph. The report will be `eval/report-holdout.md`.
 | Metric                           | Result                         |
 | -------------------------------- | ------------------------------ |
 | Safety recall (must be 100%)     | **100% (5/5)**, 0 false alarms |
-| Trade                            | 97.5% (39/40)                  |
-| Asset                            | 97.5% (39/40)                  |
-| Urgency exact / within one level | 77.5% / 100%                   |
-| Urgency under-calls              | 2.5% (1/40)                    |
+| Trade                            | 100% (40/40)                   |
+| Asset                            | 95% (38/40)                    |
+| Urgency exact / within one level | 87.5% / 100%                   |
+| Urgency under-calls              | 0% (0/40)                      |
 | Duplicates (precision / recall)  | 100% / 100% (4/4)              |
 | Needs-human (precision / recall) | 100% / 100% (4/4)              |
 | Escalated to the big model       | 10%                            |
-| Latency avg / p95                | 0.87 s / 1.8 s                 |
-| Tokens / cost per request        | ~1,570 tokens / ~$0.0002       |
+| Latency avg / p95                | 0.81 s / 1.9 s                 |
+| Tokens / cost per request        | ~1,735 tokens / ~$0.0002       |
 
-What tuning showed (three full runs, tune set only):
+What tuning showed (four full runs, tune set only):
 
 - Safety, trade, duplicates and needs-human were right in every run. The misses are almost all
   urgency borderlines, such as whether a slow ice machine is routine or urgent.
@@ -135,8 +135,12 @@ What tuning showed (three full runs, tune set only):
   changes can't be told apart from noise with 40 cases.
 - Run 1 (base prompt): 30/40 with 2 under-calls. Run 2 (added "start from routine" rules): 30/40
   with 1 under-call. Run 3 (rules as an ordered checklist): 29/40 with **6 under-calls**. The
-  committed prompt is run 2's, because under-calling an urgent problem costs more than over-calling
-  it.
+  committed prompt after run 3 was run 2's, because under-calling an urgent problem costs more than
+  over-calling it.
+- Run 4 (after QA): added rules for active leaks the reporter stresses (urgent), fixtures that run
+  nonstop but drain (routine), and any rodent or roach in a food area incl. dry storage (urgent).
+  **33/40 with 0 under-calls**; this is the committed prompt. Remaining misses are over-calls by one
+  level and two asset picks.
 
 ## Privacy
 
