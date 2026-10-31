@@ -276,7 +276,7 @@ async function normalize(
       .lean();
     sensor = assessSensor(
       spec,
-      input.value,
+      { at: readingAt, value: input.value },
       history.map((h) => ({ at: h.readingAt, value: h.value })),
     );
     const limit =

@@ -231,7 +231,7 @@ describe('pipeline', () => {
       /^At this rate it crosses the threshold (in under a day|in about \d+ days?)\.$/,
     );
     expect(p.escalated).toBe(false);
-    expect(p.inputText).toMatch(/40.4°F/);
+    expect(p.inputText).toMatch(/40.4 °F/);
   });
 
   it('sensor still produces a proposal when the model is down', async () => {

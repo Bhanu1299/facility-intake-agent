@@ -76,6 +76,9 @@ heater 10°F) and `r` = how far past the threshold the reading is, divided by `m
 - `r >= 1` → `emergency`; `0 < r < 1` → `urgent`
 - not past the threshold: linear trend over recent readings crosses it in ≤ 2 days → `urgent`,
   ≤ 7 days → `routine`, otherwise `low`.
+- The trend is a least-squares fit over the last 24h, new reading included. If the new reading
+  moved at least one `margin` toward the threshold since the previous one, the reason says
+  "jumped from X to Y" instead of a per-day rate.
 
 **needsHuman:** true when a reasonable dispatcher could not tell what is broken or which asset
 (e.g. two rooftop units and the message doesn't say which). A request with no equipment involved

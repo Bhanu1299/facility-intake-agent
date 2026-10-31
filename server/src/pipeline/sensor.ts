@@ -34,10 +34,18 @@ export interface SensorAssessment {
   severity: number;
   slopePerDay: number | null;
   daysToThreshold: number | null;
+  /** Set when the new reading moved sharply toward the threshold versus the previous one. */
+  jumpedFrom: number | null;
 }
 
+/** Window used for the rate. Older readings describe a different regime than "right now". */
+export const RATE_WINDOW_HOURS = 24;
+
+const round1 = (n: number): number => Math.round(n * 10) / 10;
+const unitText = (unit: SensorSpec['unit']): string => (unit === 'F' ? '°F' : 'mm/s');
+
 export function formatValue(value: number, unit: SensorSpec['unit']): string {
-  return unit === 'F' ? `${value}°F` : `${value} mm/s`;
+  return `${round1(value)} ${unitText(unit)}`;
 }
 
 function formatDays(days: number): string {
@@ -47,37 +55,57 @@ function formatDays(days: number): string {
 }
 
 /**
- * Urgency from data, not the model. `history` should be recent readings (e.g. last 48h)
- * including the new one. Rules (documented in eval/README.md):
+ * Urgency from data, not the model. `reading` is the new value; `history` is recent readings
+ * (it may or may not already contain the new one). The rate uses the last 24h, new reading
+ * included. Rules (documented in eval/README.md):
  *   past threshold by >= 1 margin -> emergency; past threshold -> urgent;
  *   otherwise trend crosses in <= 2 days -> urgent, <= 7 days -> routine, else low.
+ * A step toward the threshold of at least one margin since the previous reading is reported as
+ * "jumped from X to Y" instead of a per-day rate, which would smear it out.
  */
-export function assessSensor(spec: SensorSpec, value: number, history: Point[]): SensorAssessment {
+export function assessSensor(spec: SensorSpec, reading: Point, history: Point[]): SensorAssessment {
+  const { value } = reading;
+  const unit = unitText(spec.unit);
   const above = spec.alertAbove !== null;
   const threshold = (above ? spec.alertAbove : spec.alertBelow) as number;
   const margin = above ? threshold - spec.normalMax : spec.normalMin - threshold;
   const pastBy = above ? value - threshold : threshold - value;
-  const slope = slopePerDay(history);
+  const windowStart = reading.at.getTime() - RATE_WINDOW_HOURS * 3_600_000;
+  const prior = history
+    .filter((p) => p.at.getTime() >= windowStart && p.at.getTime() < reading.at.getTime())
+    .sort((a, b) => a.at.getTime() - b.at.getTime());
+  const slope = slopePerDay([...prior, reading]);
   // Rate toward the threshold (positive = getting worse).
   const towardRate = slope === null ? null : above ? slope : -slope;
-  const thresholdText = `${above ? 'alert above' : 'alert below'} ${formatValue(threshold, spec.unit)}`;
-  const reading = formatValue(value, spec.unit);
+  const previous = prior.at(-1) ?? null;
+  const step = previous ? (above ? value - previous.value : previous.value - value) : 0;
+  const jumpedFrom = previous && step >= margin ? previous.value : null;
+  const limit = `the ${formatValue(threshold, spec.unit)} limit`;
+  const readingText = formatValue(value, spec.unit);
+  const movement =
+    jumpedFrom !== null
+      ? `it ${above ? 'jumped' : 'dropped'} from ${round1(jumpedFrom)} to ${readingText} since the previous reading`
+      : null;
+  const ratePhrase = (digits: number): string =>
+    `${above ? 'rising' : 'falling'} about ${Math.abs(towardRate!).toFixed(digits)} ${unit} per day over the last ${RATE_WINDOW_HOURS}h`;
 
   if (pastBy > 0) {
     const severity = pastBy / margin;
     const urgency: Urgency = severity >= 1 ? 'emergency' : 'urgent';
-    const rising =
-      towardRate !== null && towardRate > 0
-        ? ` and still getting worse by about ${Math.abs(towardRate).toFixed(1)} ${spec.unit === 'F' ? '°F' : 'mm/s'} per day`
+    const detail = movement
+      ? `; ${movement}`
+      : towardRate !== null && towardRate > 0
+        ? `, still ${ratePhrase(1)}`
         : '';
     return {
       urgency,
-      urgencyReason: `Reading ${reading} is past the threshold (${thresholdText}) by ${Math.abs(pastBy).toFixed(1)}${rising}.`,
+      urgencyReason: `Reading ${readingText} is ${pastBy.toFixed(1)} ${unit} ${above ? 'above' : 'below'} ${limit}${detail}.`,
       trendNote: null,
       pastThreshold: true,
       severity,
       slopePerDay: slope,
       daysToThreshold: 0,
+      jumpedFrom,
     };
   }
 
@@ -93,17 +121,21 @@ export function assessSensor(spec: SensorSpec, value: number, history: Point[]):
       ? `At this rate it crosses the threshold ${formatDays(daysToThreshold)}.`
       : null;
 
+  const within = `Reading ${readingText} is within limits (${(-pastBy).toFixed(1)} ${unit} ${above ? 'below' : 'above'} ${limit})`;
   return {
     urgency,
     urgencyReason:
-      `Reading ${reading} is within limits (${thresholdText})` +
-      (trendNote
-        ? `, but it has been moving toward the threshold by about ${Math.abs(towardRate!).toFixed(2)} ${spec.unit === 'F' ? '°F' : 'mm/s'} per day.`
-        : ' and is not trending toward it.'),
+      within +
+      (movement
+        ? `, but ${movement}.`
+        : trendNote
+          ? `, but it has been ${ratePhrase(2)}.`
+          : ' and is not trending toward it.'),
     trendNote,
     pastThreshold: false,
     severity: 0,
     slopePerDay: slope,
     daysToThreshold,
+    jumpedFrom,
   };
 }
