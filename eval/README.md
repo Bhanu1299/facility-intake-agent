@@ -1,13 +1,14 @@
 # Eval set
 
-Test cases and expected answers were written by the author (and, for half the holdout, by a
-human reviewer). They were written **before any prompt existed**.
+Test cases and expected answers were written by the author, except the human half of the holdout:
+messages sourced from a human; expected answers labeled by a separate AI reviewer, not the prompt
+author. The tune set and the AI half of the holdout were written **before any prompt existed**.
 
 | File                       | Cases | Used for                                                                        |
 | -------------------------- | ----- | ------------------------------------------------------------------------------- |
 | `cases.tune.json`          | 40    | Prompt tuning. Free to read and iterate on.                                     |
 | `cases.holdout.ai.json`    | 10    | Final score only. Written by the AI author in Phase 3, then never opened again. |
-| `cases.holdout.human.json` | 10    | Final score only. Written by a human reviewer.                                  |
+| `cases.holdout.human.json` | 10    | Final score only. Human-sourced messages, AI-reviewer labels.                   |
 
 The holdout run loads both holdout files and reports AI-written, human-written and combined scores.
 

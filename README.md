@@ -105,12 +105,27 @@ so a client can't bypass it.
 
 ## Eval results
 
-Test cases and expected answers were written by the author. There are 60 labeled cases, all
-written before any prompt existed: 40 for tuning, and a 20-case holdout (10 AI-written, 10
-written by a human reviewer) that was never used for tuning.
+There are 60 labeled cases: 40 for tuning, and a 20-case holdout that was never used for tuning.
+The tune set and the AI half of the holdout were written by the author before any prompt existed.
+The human half of the holdout is messages sourced from a human; expected answers labeled by a
+separate AI reviewer, not the prompt author.
 
-**Holdout: pending.** It runs once, after the 10 human-written cases are filled in, and its numbers
-replace this paragraph. The report will be `eval/report-holdout.md`.
+**Holdout** (`eval/report-holdout.md`, run once, no prompt changes after):
+
+| Metric                           | AI (10)           | Human (10)        | Combined (20)                  |
+| -------------------------------- | ----------------- | ----------------- | ------------------------------ |
+| All fields correct               | 60% (6/10)        | 70% (7/10)        | **65% (13/20)**                |
+| Safety recall (must be 100%)     | **100% (1/1)**    | **100% (2/2)**    | **100% (3/3)**, 0 false alarms |
+| Trade                            | 90% (9/10)        | 100% (10/10)      | 95% (19/20)                    |
+| Asset                            | 100% (10/10)      | 100% (10/10)      | 100% (20/20)                   |
+| Urgency exact / within one level | 70% / 100%        | 80% / 100%        | 75% / 100%                     |
+| Urgency under-calls              | 0% (0/10)         | 0% (0/10)         | 0% (0/20)                      |
+| Duplicates (precision / recall)  | 100% / 100% (2/2) | 100% / 100% (1/1) | 100% / 100% (3/3)              |
+| Needs-human recall               | n/a               | 0% (0/1)          | 0% (0/1)                       |
+
+Of the 7 misses, 5 are urgency over-calls (rated one level more urgent than labeled), 1 is a trade
+miss (torn walk-in cooler door seal sent to handyman, not refrigeration) and 1 is a missed
+needs-human flag (a loose, shaking ceiling AC vent).
 
 **Tune set** (`eval/report-tune.md`, the prompt as committed):
 
@@ -196,7 +211,8 @@ Directory = repo root, `VITE_API_URL` = the Render URL), MongoDB Atlas free clus
 
 - **Fake data.** Sites, assets, vendors, budgets, history and sensor readings are generated.
 - **Author-written test cases.** The tune set and half the holdout were written by the same author
-  who wrote the prompts. The other 10 holdout cases were written by a human reviewer.
+  who wrote the prompts. The other 10 holdout cases are messages sourced from a human; expected
+  answers labeled by a separate AI reviewer, not the prompt author.
 - **Private mode is untested.** It is supported by configuration only.
 - **Dispatch emails are not sent.** They are drafted, stored on the work order and shown as
   "Draft — not sent".

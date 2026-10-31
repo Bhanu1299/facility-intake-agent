@@ -118,7 +118,7 @@ export function renderReport(input: ReportInput): string {
   out.push('');
   if (set === 'holdout') {
     out.push(
-      'The holdout has two halves: cases written by the AI author (`ai`) and cases written by a human reviewer (`human`). Neither was used for prompt tuning.',
+      'The holdout has two halves: cases written by the AI author (`ai`) and cases whose messages were sourced from a human, with expected answers labeled by a separate AI reviewer, not the prompt author (`human`). Neither was used for prompt tuning.',
     );
   }
   out.push('');

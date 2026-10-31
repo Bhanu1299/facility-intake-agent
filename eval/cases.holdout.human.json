@@ -3,78 +3,199 @@
     "id": "holdout-human-example",
     "example": true,
     "category": "duplicate",
-    "input": { "type": "request", "siteId": "amherst", "text": "front door still slamming shut, the closer arm is hanging off" },
-    "expected": { "trade": "handyman", "assetId": "amherst-front-door", "urgency": "routine", "duplicateOf": "wo-seed-004", "needsHuman": false, "safetyEmergency": false },
+    "input": {
+      "type": "request",
+      "siteId": "amherst",
+      "text": "front door still slamming shut, the closer arm is hanging off"
+    },
+    "expected": {
+      "trade": "handyman",
+      "assetId": "amherst-front-door",
+      "urgency": "routine",
+      "duplicateOf": "wo-seed-004",
+      "needsHuman": false,
+      "safetyEmergency": false
+    },
     "note": "EXAMPLE ONLY (skipped by the runner). Same problem as open work order wo-seed-004."
   },
   {
     "id": "holdout-human-01",
     "category": "easy",
-    "input": { "type": "request", "siteId": "", "text": "" },
-    "expected": { "trade": "", "assetId": null, "urgency": "", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
-    "note": ""
+    "input": {
+      "type": "request",
+      "siteId": "hertel",
+      "text": "The commode in the women's restroom is not flushing."
+    },
+    "expected": {
+      "trade": "plumbing",
+      "assetId": "hertel-restroom-womens",
+      "urgency": "routine",
+      "duplicateOf": null,
+      "needsHuman": false,
+      "safetyEmergency": false
+    },
+    "note": "Toilet won't flush. Restroom still usable otherwise, needs a visit within days."
   },
   {
     "id": "holdout-human-02",
     "category": "easy",
-    "input": { "type": "request", "siteId": "", "text": "" },
-    "expected": { "trade": "", "assetId": null, "urgency": "", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
-    "note": ""
+    "input": {
+      "type": "request",
+      "siteId": "amherst",
+      "text": "The sink in the men's restroom is not draining properly."
+    },
+    "expected": {
+      "trade": "plumbing",
+      "assetId": "amherst-restroom-mens",
+      "urgency": "routine",
+      "duplicateOf": null,
+      "needsHuman": false,
+      "safetyEmergency": false
+    },
+    "note": "Slow/blocked drain, not an emergency."
   },
   {
     "id": "holdout-human-03",
     "category": "messy",
-    "input": { "type": "request", "siteId": "", "text": "" },
-    "expected": { "trade": "", "assetId": null, "urgency": "", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
-    "note": ""
+    "input": {
+      "type": "request",
+      "siteId": "hertel",
+      "text": "the down pipe under the hand wash in mens washrom is leking, small puddle on floor"
+    },
+    "expected": {
+      "trade": "plumbing",
+      "assetId": "hertel-restroom-mens",
+      "urgency": "routine",
+      "duplicateOf": null,
+      "needsHuman": false,
+      "safetyEmergency": false
+    },
+    "note": "Small drain-pipe leak under the sink. Typos. Needs a visit soon, not urgent."
   },
   {
     "id": "holdout-human-04",
     "category": "messy",
-    "input": { "type": "request", "siteId": "", "text": "" },
-    "expected": { "trade": "", "assetId": null, "urgency": "", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
-    "note": ""
+    "input": {
+      "type": "request",
+      "siteId": "canalside",
+      "text": "wash basin in ladies room leakin water from the bottom n the tap barely gives any water"
+    },
+    "expected": {
+      "trade": "plumbing",
+      "assetId": "canalside-restroom-womens",
+      "urgency": "routine",
+      "duplicateOf": null,
+      "needsHuman": false,
+      "safetyEmergency": false
+    },
+    "note": "Two problems, same fixture: leak (primary) and weak tap."
   },
   {
     "id": "holdout-human-05",
     "category": "messy",
-    "input": { "type": "request", "siteId": "", "text": "" },
-    "expected": { "trade": "", "assetId": null, "urgency": "", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
-    "note": ""
+    "input": {
+      "type": "request",
+      "siteId": "cheektowaga",
+      "text": "storage fridge reading 70 F!! everythin in there is warm"
+    },
+    "expected": {
+      "trade": "refrigeration",
+      "assetId": "cheektowaga-walkin-cooler",
+      "urgency": "urgent",
+      "duplicateOf": null,
+      "needsHuman": false,
+      "safetyEmergency": false
+    },
+    "note": "Walk-in cooler not holding temp = urgent per labeling rules. Open gasket job wo-seed-006 is outside the 72h window, so not a duplicate."
   },
   {
     "id": "holdout-human-06",
     "category": "emergency",
-    "input": { "type": "request", "siteId": "", "text": "" },
-    "expected": { "trade": "", "assetId": null, "urgency": "emergency", "duplicateOf": null, "needsHuman": false, "safetyEmergency": true },
-    "note": ""
+    "input": {
+      "type": "request",
+      "siteId": "hertel",
+      "text": "fryer plug is sparking and smells like burning, we unplugged it"
+    },
+    "expected": {
+      "trade": "electrical",
+      "assetId": "hertel-fryer",
+      "urgency": "emergency",
+      "duplicateOf": null,
+      "needsHuman": false,
+      "safetyEmergency": true
+    },
+    "note": "Sparks = safety emergency."
   },
   {
     "id": "holdout-human-07",
     "category": "emergency",
-    "input": { "type": "request", "siteId": "", "text": "" },
-    "expected": { "trade": "", "assetId": null, "urgency": "emergency", "duplicateOf": null, "needsHuman": false, "safetyEmergency": true },
-    "note": ""
+    "input": {
+      "type": "request",
+      "siteId": "amherst",
+      "text": "toilet overflowing in womens room, water everywhere going into the hallway"
+    },
+    "expected": {
+      "trade": "plumbing",
+      "assetId": "amherst-restroom-womens",
+      "urgency": "emergency",
+      "duplicateOf": null,
+      "needsHuman": false,
+      "safetyEmergency": true
+    },
+    "note": "Flooding spreading into hallway = safety emergency."
   },
   {
     "id": "holdout-human-08",
     "category": "duplicate",
-    "input": { "type": "request", "siteId": "", "text": "" },
-    "expected": { "trade": "", "assetId": null, "urgency": "", "duplicateOf": "", "needsHuman": false, "safetyEmergency": false },
-    "note": ""
+    "input": {
+      "type": "request",
+      "siteId": "hertel",
+      "text": "dish machine still not draining, standing water inside it"
+    },
+    "expected": {
+      "trade": "plumbing",
+      "assetId": "hertel-dishwasher",
+      "urgency": "urgent",
+      "duplicateOf": "wo-seed-003",
+      "needsHuman": false,
+      "safetyEmergency": false
+    },
+    "note": "Same problem as open work order wo-seed-003 (10h old). Dishwasher down = urgent."
   },
   {
     "id": "holdout-human-09",
     "category": "needs_human",
-    "input": { "type": "request", "siteId": "", "text": "" },
-    "expected": { "trade": "", "assetId": null, "urgency": "", "duplicateOf": null, "needsHuman": true, "safetyEmergency": false },
-    "note": ""
+    "input": {
+      "type": "request",
+      "siteId": "elmwood",
+      "text": "the AC vent up on the ceiling is loose n shaking, its near the wall"
+    },
+    "expected": {
+      "trade": "hvac",
+      "assetId": null,
+      "urgency": "routine",
+      "duplicateOf": null,
+      "needsHuman": true,
+      "safetyEmergency": false
+    },
+    "note": "Two rooftop units; message doesn't say dining room or kitchen, so the asset can't be told."
   },
   {
     "id": "holdout-human-10",
     "category": "spanish",
-    "input": { "type": "request", "siteId": "", "text": "" },
-    "expected": { "trade": "", "assetId": null, "urgency": "", "duplicateOf": null, "needsHuman": false, "safetyEmergency": false },
-    "note": ""
+    "input": {
+      "type": "request",
+      "siteId": "cheektowaga",
+      "text": "No sale agua del grifo del lavamanos en el baño de mujeres"
+    },
+    "expected": {
+      "trade": "plumbing",
+      "assetId": "cheektowaga-restroom-womens",
+      "urgency": "routine",
+      "duplicateOf": null,
+      "needsHuman": false,
+      "safetyEmergency": false
+    },
+    "note": "No water from the women's restroom sink tap. One tap, restroom otherwise usable."
   }
 ]
