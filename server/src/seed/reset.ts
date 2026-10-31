@@ -1,4 +1,5 @@
-import mongoose from 'mongoose';
+import mongoose, { type Model } from 'mongoose';
+import type { Document } from 'mongodb';
 import type { AutonomyMode } from '@fia/shared';
 import {
   AssetModel,
@@ -21,11 +22,18 @@ export interface ResetSummary {
   timingsMs: { wipe: number; insert: number; indexes: number; total: number };
 }
 
-// The seed is generated in code and already valid: skip per-document validation and hydration,
-// and let the server apply each batch in any order.
-const BULK = { ordered: false, lean: true } as const;
+// The seed is generated in code and already valid, so it goes straight to the driver: no
+// per-document validation, batches applied in any order, and acknowledged by the primary alone
+// (waiting for a replica majority roughly doubles the time on a shared cluster, and this is
+// throwaway demo data).
+const FAST = { writeConcern: { w: 1 } } as const;
+const BULK = { ...FAST, ordered: false } as const;
 /** Sensor readings go in as parallel chunks so the server can apply them concurrently. */
 const READING_CHUNK = 1000;
+
+/** Driver insertMany for a model. The driver's types assume ObjectId ids; ours are strings. */
+const load = (model: Pick<Model<unknown>, 'collection'>, docs: readonly object[]) =>
+  model.collection.insertMany(docs as unknown as Document[], BULK);
 
 const chunks = <T>(items: T[], size: number): T[][] =>
   Array.from({ length: Math.ceil(items.length / size) }, (_, i) =>
@@ -54,22 +62,20 @@ export async function resetDemoData(
     Object.values(mongoose.connection.collections).map((c) =>
       c.collectionName === readings
         ? c.drop().catch(() => undefined) // already gone
-        : c.deleteMany({}),
+        : c.deleteMany({}, FAST),
     ),
   );
   const wiped = Date.now();
 
   await Promise.all([
-    SiteModel.insertMany(data.sites, BULK),
-    AssetModel.insertMany(data.assets, BULK),
-    VendorModel.insertMany(data.vendors, BULK),
-    BudgetModel.insertMany(data.budgets, BULK),
-    WorkOrderModel.insertMany(data.workOrders, BULK),
-    CounterModel.insertMany([{ _id: 'workOrder', seq: data.nextWorkOrderSeq }], BULK),
-    SettingsModel.insertMany([{ _id: 'global', autonomyMode }], BULK),
-    ...chunks(data.sensorReadings, READING_CHUNK).map((batch) =>
-      SensorReadingModel.insertMany(batch, BULK),
-    ),
+    load(SiteModel, data.sites),
+    load(AssetModel, data.assets),
+    load(VendorModel, data.vendors),
+    load(BudgetModel, data.budgets),
+    load(WorkOrderModel, data.workOrders),
+    load(CounterModel, [{ _id: 'workOrder', seq: data.nextWorkOrderSeq }]),
+    load(SettingsModel, [{ _id: 'global', autonomyMode }]),
+    ...chunks(data.sensorReadings, READING_CHUNK).map((batch) => load(SensorReadingModel, batch)),
   ]);
   const inserted = Date.now();
 
