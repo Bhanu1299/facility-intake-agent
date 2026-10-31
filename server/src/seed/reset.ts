@@ -24,12 +24,21 @@ export interface ResetSummary {
 // The seed is generated in code and already valid: skip per-document validation and hydration,
 // and let the server apply each batch in any order.
 const BULK = { ordered: false, lean: true } as const;
+/** Sensor readings go in as parallel chunks so the server can apply them concurrently. */
+const READING_CHUNK = 1000;
+
+const chunks = <T>(items: T[], size: number): T[][] =>
+  Array.from({ length: Math.ceil(items.length / size) }, (_, i) =>
+    items.slice(i * size, (i + 1) * size),
+  );
 
 /**
  * Wipes every collection (including proposals, signals and the activity log) and reloads the
- * demo dataset anchored to `now`. Collections are dropped rather than emptied (deleting ~8k
- * sensor readings one by one is slow on a shared cluster), loaded in parallel, and indexed
- * after the data is in.
+ * demo dataset anchored to `now`. Tuned for a shared hosted cluster, where per-document deletes
+ * and index builds are the slow parts:
+ *  - sensor readings (~8k docs) are dropped, bulk-loaded in parallel chunks, then get their one
+ *    index rebuilt;
+ *  - every other collection is small, so it is emptied in place and keeps its indexes.
  */
 export async function resetDemoData(
   autonomyMode: AutonomyMode,
@@ -37,11 +46,17 @@ export async function resetDemoData(
 ): Promise<ResetSummary> {
   const started = Date.now();
   const data = generateSeedData(now);
+  // Creates collections and indexes on a fresh database; a no-op after the first call.
+  await Promise.all(Object.values(mongoose.models).map((m) => m.init()));
 
-  const collections = await mongoose.connection
-    .db!.listCollections({}, { nameOnly: true })
-    .toArray();
-  await Promise.all(collections.map((c) => mongoose.connection.db!.dropCollection(c.name)));
+  const readings = SensorReadingModel.collection.collectionName;
+  await Promise.all(
+    Object.values(mongoose.connection.collections).map((c) =>
+      c.collectionName === readings
+        ? c.drop().catch(() => undefined) // already gone
+        : c.deleteMany({}),
+    ),
+  );
   const wiped = Date.now();
 
   await Promise.all([
@@ -50,14 +65,16 @@ export async function resetDemoData(
     VendorModel.insertMany(data.vendors, BULK),
     BudgetModel.insertMany(data.budgets, BULK),
     WorkOrderModel.insertMany(data.workOrders, BULK),
-    SensorReadingModel.insertMany(data.sensorReadings, BULK),
     CounterModel.insertMany([{ _id: 'workOrder', seq: data.nextWorkOrderSeq }], BULK),
     SettingsModel.insertMany([{ _id: 'global', autonomyMode }], BULK),
+    ...chunks(data.sensorReadings, READING_CHUNK).map((batch) =>
+      SensorReadingModel.insertMany(batch, BULK),
+    ),
   ]);
   const inserted = Date.now();
 
-  // Dropping removed the indexes; rebuild them (this also creates the empty collections).
-  await Promise.all(Object.values(mongoose.models).map((m) => m.createIndexes()));
+  // The drop removed the readings index; build it once over the loaded data.
+  await SensorReadingModel.createIndexes();
   const indexed = Date.now();
 
   return {
