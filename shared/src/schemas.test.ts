@@ -6,6 +6,7 @@ import {
   URGENCIES,
   URGENCY_RANK,
   compareForInbox,
+  detectLanguage,
 } from './index';
 
 describe('SignalInput', () => {
@@ -110,5 +111,19 @@ describe('compareForInbox', () => {
       routineNew,
       low,
     ]);
+  });
+});
+
+describe('detectLanguage', () => {
+  it('spots Spanish requests', () => {
+    expect(detectLanguage('El baño de mujeres está inundado')).toBe('es');
+    expect(detectLanguage('la puerta de la cocina no cierra')).toBe('es');
+    expect(detectLanguage('huele a gas en la cocina')).toBe('es');
+  });
+
+  it('keeps English (and short or mixed text) as English', () => {
+    expect(detectLanguage('sink leaking bad 2nd floor mens room!!')).toBe('en');
+    expect(detectLanguage('no hot water in the kitchen')).toBe('en');
+    expect(detectLanguage('fryer down')).toBe('en');
   });
 });

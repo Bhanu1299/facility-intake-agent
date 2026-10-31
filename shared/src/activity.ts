@@ -10,7 +10,9 @@ export const PIPELINE_STEPS = [
   'propose',
 ] as const;
 export const HUMAN_ACTIONS = ['edit', 'approve', 'reject', 'settings', 'reset'] as const;
-export const ActivityStep = z.enum([...PIPELINE_STEPS, ...HUMAN_ACTIONS]);
+/** Steps the system takes after a human action, e.g. dispatching an approved work order. */
+export const SYSTEM_ACTIONS = ['dispatch'] as const;
+export const ActivityStep = z.enum([...PIPELINE_STEPS, ...HUMAN_ACTIONS, ...SYSTEM_ACTIONS]);
 export type ActivityStep = z.infer<typeof ActivityStep>;
 
 /** `system`, `manager`, or `model:<model name>`. */

@@ -23,6 +23,8 @@ export interface SignalDoc {
   type: SignalInput['type'];
   siteId: string;
   input: SignalInput;
+  /** REQ-#### for requests (shown to the requester), null for sensor signals. */
+  reference: string | null;
   receivedAt: Date;
   status: SignalStatus;
   proposalId: string | null;
@@ -37,6 +39,7 @@ export const SignalModel = model<SignalDoc>(
       type: { type: String, enum: ['request', 'sensor'], required: true },
       siteId: { type: String, required: true },
       input: { type: Mixed, required: true },
+      reference: { type: String, default: null },
       receivedAt: { type: Date, required: true },
       status: { type: String, enum: ['processing', 'done', 'failed'], required: true },
       proposalId: { type: String, default: null },
@@ -50,6 +53,7 @@ export interface ProposalDoc {
   _id: string;
   signalId: string;
   signalType: 'request' | 'sensor';
+  reference: string | null;
   inputText: string;
   status: ProposalStatus;
   action: 'create' | 'merge';
@@ -82,6 +86,7 @@ const ProposalSchema = new Schema<ProposalDoc>(
     _id: { type: String, required: true },
     signalId: { type: String, required: true, index: true },
     signalType: { type: String, enum: ['request', 'sensor'], required: true },
+    reference: { type: String, default: null },
     inputText: { type: String, required: true },
     status: { type: String, enum: PROPOSAL_STATUSES, required: true },
     action: { type: String, enum: ['create', 'merge'], required: true },

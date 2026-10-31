@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { WORK_ORDER_STATUSES, type WorkOrder, type WorkOrderStatus } from '@fia/shared';
 import { api } from '../api';
@@ -16,15 +16,29 @@ import {
   UrgencyBadge,
 } from '../components/ui';
 
+const PAGE_SIZE = 25;
+
+/** `open` = anything not completed (the default view); '' = everything. */
+type StatusFilter = WorkOrderStatus | 'open' | '';
+
 export function WorkOrdersPage() {
   const { version, sites, siteName, vendorName } = useApp();
-  const [status, setStatus] = useState<WorkOrderStatus | ''>('');
+  const [status, setStatus] = useState<StatusFilter>('open');
   const [siteId, setSiteId] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
+  const [shown, setShown] = useState(PAGE_SIZE);
   const wos = useAsync(
-    () => api.workOrders({ status: status || undefined, siteId: siteId || undefined }),
+    () =>
+      api.workOrders({
+        status: status && status !== 'open' ? status : undefined,
+        siteId: siteId || undefined,
+      }),
     [status, siteId, version],
     8000,
+  );
+  const rows = useMemo(
+    () => (wos.data ?? []).filter((w) => status !== 'open' || w.status !== 'completed'),
+    [wos.data, status],
   );
 
   return (
@@ -38,8 +52,12 @@ export function WorkOrdersPage() {
               aria-label="Filter by status"
               className={`${inputBase} w-auto`}
               value={status}
-              onChange={(e) => setStatus(e.target.value as WorkOrderStatus | '')}
+              onChange={(e) => {
+                setStatus(e.target.value as StatusFilter);
+                setShown(PAGE_SIZE);
+              }}
             >
+              <option value="open">Open</option>
               <option value="">All statuses</option>
               {WORK_ORDER_STATUSES.filter((s) => s !== 'proposed').map((s) => (
                 <option key={s} value={s}>
@@ -51,7 +69,10 @@ export function WorkOrdersPage() {
               aria-label="Filter by site"
               className={`${inputBase} w-auto`}
               value={siteId}
-              onChange={(e) => setSiteId(e.target.value)}
+              onChange={(e) => {
+                setSiteId(e.target.value);
+                setShown(PAGE_SIZE);
+              }}
             >
               <option value="">All sites</option>
               {sites.map((s) => (
@@ -66,9 +87,9 @@ export function WorkOrdersPage() {
 
       {wos.error && !wos.data && <ErrorBanner message={wos.error} onRetry={wos.reload} />}
       {!wos.data && !wos.error && <Spinner />}
-      {wos.data && wos.data.length === 0 && <Empty title="No work orders match these filters" />}
+      {wos.data && rows.length === 0 && <Empty title="No work orders match these filters" />}
 
-      {wos.data && wos.data.length > 0 && (
+      {rows.length > 0 && (
         <div className="overflow-hidden rounded-xl bg-white ring-1 ring-slate-200">
           <table className="w-full text-left text-[0.95rem]">
             <thead className="hidden bg-slate-50 text-xs uppercase tracking-wider text-slate-500 md:table-header-group">
@@ -82,7 +103,7 @@ export function WorkOrdersPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {wos.data.map((w) => (
+              {rows.slice(0, shown).map((w) => (
                 <Row
                   key={w.id}
                   wo={w}
@@ -94,6 +115,15 @@ export function WorkOrdersPage() {
               ))}
             </tbody>
           </table>
+          {rows.length > shown && (
+            <button
+              type="button"
+              onClick={() => setShown((n) => n + PAGE_SIZE)}
+              className="w-full border-t border-slate-200 px-4 py-2.5 text-sm font-medium text-teal-800 hover:bg-slate-50"
+            >
+              Show more ({rows.length - shown} left)
+            </button>
+          )}
         </div>
       )}
     </div>

@@ -23,7 +23,7 @@ describe('pipeline', () => {
 
   async function run(input: SignalInput, llm: FakeLlm) {
     const deps: PipelineDeps = { llm, models: MODELS, now: () => now };
-    const signalId = await createSignal(input, now);
+    const { id: signalId } = await createSignal(input, now);
     const doc = await runPipeline(signalId, deps);
     return Proposal.parse(JSON.parse(JSON.stringify(doc)));
   }
@@ -344,6 +344,8 @@ describe('signals API', () => {
       .expect(202);
     expect(res.body.status).toBe('processing');
     expect(res.body.safetyRuleId).toBeNull();
+    expect(res.body.reference).toMatch(/^REQ-\d{4}$/);
+    expect(res.body.language).toBe('en');
     await app.locals.pipelines.idle();
 
     const signal = await request(app).get(`/api/signals/${res.body.signalId}`).expect(200);
@@ -352,6 +354,7 @@ describe('signals API', () => {
     expect(list.body).toHaveLength(1);
     const one = await request(app).get(`/api/proposals/${signal.body.proposalId}`).expect(200);
     expect(Proposal.parse(one.body).signalId).toBe(res.body.signalId);
+    expect(one.body.reference).toBe(res.body.reference);
     const log = await request(app).get(`/api/activity?proposalId=${one.body.id}`).expect(200);
     expect(log.body.length).toBeGreaterThanOrEqual(7);
   });
@@ -363,6 +366,12 @@ describe('signals API', () => {
       .send({ type: 'request', siteId: 'elmwood', text: 'it smells like gas in the kitchen' })
       .expect(202);
     expect(res.body.safetyRuleId).toBe('gas_smell');
+    const es = await request(app)
+      .post('/api/signals')
+      .send({ type: 'request', siteId: 'elmwood', text: 'huele a gas en la cocina' })
+      .expect(202);
+    expect(es.body).toMatchObject({ safetyRuleId: 'gas_smell', language: 'es' });
+    expect(es.body.reference).not.toBe(res.body.reference);
     await app.locals.pipelines.idle();
   });
 

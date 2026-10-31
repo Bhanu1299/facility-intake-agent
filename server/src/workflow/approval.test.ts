@@ -28,7 +28,7 @@ describe('approval gate', () => {
       () => understanding(u),
       () => ({ sameProblem: dup, reason: dup ? 'Same problem.' : 'Different.' }),
     );
-    const signalId = await createSignal(input);
+    const { id: signalId } = await createSignal(input);
     const p = await runPipeline(signalId, { llm, models: { small: 's', big: 'b' } });
     return p._id;
   }
@@ -70,8 +70,10 @@ describe('approval gate', () => {
     expect(wo.dispatchEmail.to).toMatch(/@.+\.example$/);
     expect(wo.dispatchEmail.body).toContain('Not-to-exceed: $150');
     expect(await available('elmwood')).toBe(before - 150);
-    const steps = await ActivityModel.find({ proposalId: id, step: 'approve' }).lean();
-    expect(steps.map((s) => s.actor).sort()).toEqual(['manager', 'system']);
+    const approvals = await ActivityModel.find({ proposalId: id, step: 'approve' }).lean();
+    expect(approvals.map((s) => s.actor)).toEqual(['manager']);
+    const dispatches = await ActivityModel.find({ proposalId: id, step: 'dispatch' }).lean();
+    expect(dispatches.map((s) => s.actor)).toEqual(['system']);
   });
 
   it('approving twice returns the same work order and commits budget once', async () => {
@@ -273,6 +275,7 @@ describe('approval gate', () => {
     const steps = log.body.map((a: { step: string }) => a.step);
     expect(steps).toContain('understand'); // includes the proposal's pipeline steps
     expect(steps).toContain('approve');
+    expect(steps).toContain('dispatch');
   });
 });
 

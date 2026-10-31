@@ -20,12 +20,14 @@ interface Props {
   onChanged: () => void;
 }
 
-function statusLine(p: Proposal | undefined): string {
+function statusLine(p: Proposal | undefined, adviseMode: boolean): string {
   switch (p?.status) {
     case undefined:
       return 'Loading…';
     case 'proposed':
-      return 'Draft work order · waiting on you';
+      return adviseMode
+        ? 'Draft work order · approvals are off in Advise mode'
+        : 'Draft work order · waiting on you';
     case 'advisory':
       return 'Advice only · switch to Propose to act on it';
     case 'approved':
@@ -37,7 +39,7 @@ function statusLine(p: Proposal | undefined): string {
 
 /** Right-side panel styled like an in-app assistant: everything the agent proposes, editable. */
 export function ProposalPanel({ proposalId, onClose, onChanged }: Props) {
-  const { version } = useApp();
+  const { version, mode } = useApp();
   const proposal = useAsync(() => api.proposal(proposalId), [proposalId, version]);
 
   useEffect(() => {
@@ -71,7 +73,7 @@ export function ProposalPanel({ proposalId, onClose, onChanged }: Props) {
           </span>
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold text-slate-900">Intake Agent</p>
-            <p className="text-xs text-slate-500">{statusLine(proposal.data)}</p>
+            <p className="text-xs text-slate-500">{statusLine(proposal.data, mode === 'advise')}</p>
           </div>
           <Button variant="ghost" onClick={onClose} aria-label="Close">
             ✕
@@ -128,7 +130,7 @@ function ProposalBody({ proposal: p, onChanged }: { proposal: Proposal; onChange
     !form.vendorId && 'choose a vendor',
   ].filter((m): m is string => Boolean(m));
   const blockedReason = missing.length
-    ? `To approve, ${missing.join(', ')}${editing ? '' : ' (use Edit)'}.`
+    ? `To approve, ${missing.join(', ')}${editing ? '' : ' (use Edit above)'}.`
     : null;
 
   const vendorOptions = useMemo(() => {
@@ -234,7 +236,8 @@ function ProposalBody({ proposal: p, onChanged }: { proposal: Proposal; onChange
       {/* What came in */}
       <div className="px-5 py-4">
         <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-          {p.signalType === 'sensor' ? 'Sensor alert' : 'Request'} · {siteName(p.draft.siteId)} ·{' '}
+          {p.signalType === 'sensor' ? 'Sensor alert' : 'Request'}
+          {p.reference ? ` ${p.reference}` : ''} · {siteName(p.draft.siteId)} ·{' '}
           {dateTime(p.createdAt)}
         </p>
         <blockquote className="mt-2 rounded-lg bg-slate-50 px-4 py-3 text-slate-800 ring-1 ring-slate-200">
@@ -544,11 +547,6 @@ function ProposalBody({ proposal: p, onChanged }: { proposal: Proposal; onChange
                     ? `Approve merge into ${p.duplicate?.workOrderNumber}`
                     : 'Approve & dispatch'}
               </Button>
-              {!editing && (
-                <Button onClick={() => setEditing(true)} disabled={busy !== null}>
-                  Edit
-                </Button>
-              )}
               <Button
                 variant="danger"
                 onClick={() => {

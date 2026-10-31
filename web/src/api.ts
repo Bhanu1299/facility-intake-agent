@@ -59,7 +59,9 @@ const SensorReadingRow = SensorReading;
 export const SignalAccepted = z.object({
   signalId: z.string(),
   status: z.string(),
+  reference: z.string().nullable().optional(),
   safetyRuleId: z.string().nullable().optional(),
+  language: z.enum(['en', 'es']).nullable().optional(),
 });
 export const AutonomyResponse = z.object({ mode: AutonomyMode, available: z.array(AutonomyMode) });
 export const ApprovalResponse = z.object({

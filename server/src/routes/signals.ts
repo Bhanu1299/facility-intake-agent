@@ -1,5 +1,5 @@
 import { Router, type RequestHandler } from 'express';
-import { SignalInput, SensorSignalInput } from '@fia/shared';
+import { SignalInput, SensorSignalInput, detectLanguage } from '@fia/shared';
 import { SignalModel } from '../models/pipeline';
 import {
   createSignal,
@@ -32,12 +32,20 @@ async function accept(
   runner: PipelineRunner,
 ): Promise<{ status: number; body: unknown }> {
   try {
-    const signalId = await createSignal(input);
+    const { id: signalId, reference } = await createSignal(input);
     runner.start(signalId);
     // The safety check is pure code, so the requester can get guidance before the model runs.
-    const safetyRuleId =
-      input.type === 'request' ? (checkSafety(input.text)?.ruleId ?? null) : null;
-    return { status: 202, body: { signalId, status: 'processing', safetyRuleId } };
+    const request = input.type === 'request' ? input : null;
+    return {
+      status: 202,
+      body: {
+        signalId,
+        status: 'processing',
+        reference,
+        safetyRuleId: request ? (checkSafety(request.text)?.ruleId ?? null) : null,
+        language: request ? detectLanguage(request.text) : null,
+      },
+    };
   } catch (err) {
     if (err instanceof SignalInputError) return { status: 400, body: { error: err.message } };
     throw err;

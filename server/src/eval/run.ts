@@ -50,7 +50,7 @@ async function runCase(c: LoadedCase, llm: PacedLlmClient, models: { small: stri
   const waitedBefore = llm.waitedMs;
   const started = Date.now();
   try {
-    const signalId = await createSignal(c.input, now);
+    const { id: signalId } = await createSignal(c.input, now);
     const p = await runPipeline(signalId, { llm, models, now: () => now });
     const latencyMs = Date.now() - started - (llm.waitedMs - waitedBefore);
     const llmFailures = llm.errors - errorsBefore;

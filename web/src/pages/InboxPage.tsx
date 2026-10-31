@@ -21,7 +21,7 @@ const matches = (p: Proposal, f: FilterKey): boolean =>
   (f === 'open' ? p.status === 'proposed' || p.status === 'advisory' : p.status === f);
 
 export function InboxPage() {
-  const { version, siteName, sites } = useApp();
+  const { version, siteName, sites, mode } = useApp();
   const [params, setParams] = useSearchParams();
   const [filter, setFilter] = useState<FilterKey>('open');
   const selectedId = params.get('p');
@@ -50,7 +50,11 @@ export function InboxPage() {
     <div>
       <PageHeader
         title="Inbox"
-        description="Requests and sensor alerts, turned into draft work orders. Nothing happens until you approve."
+        description={
+          mode === 'advise'
+            ? 'Requests and sensor alerts, analyzed by the agent. Advise mode: nothing can be approved or dispatched.'
+            : 'Requests and sensor alerts, turned into draft work orders. Nothing happens until you approve.'
+        }
       />
 
       <div className="mb-4 flex flex-wrap gap-2" role="tablist">

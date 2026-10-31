@@ -182,7 +182,7 @@ export function rankVendors(
     parts.push(
       e.miles === distR[0] && eligible.length > 1 ? `Closest (${miles} mi)` : `${miles} mi away`,
     );
-    parts.push(`${e.v.rating} rating`);
+    parts.push(`${e.v.rating.toFixed(1)} rating`);
     if (e.v.performanceScore === perfR[1] && eligible.length > 1) {
       parts.push(`top performance score (${e.v.performanceScore})`);
     }

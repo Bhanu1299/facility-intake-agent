@@ -258,7 +258,7 @@ async function applyCreate(
       { status: 'dispatched', dispatchEmail: email, updatedAt: new Date() },
     );
     await logActivity({
-      step: 'approve',
+      step: 'dispatch',
       actor: 'system',
       proposalId: p._id,
       workOrderId,

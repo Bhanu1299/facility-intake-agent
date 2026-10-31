@@ -17,6 +17,7 @@ const STEP_STYLE: Record<string, string> = {
   propose: 'bg-teal-100 text-teal-800',
   edit: 'bg-slate-200 text-slate-800',
   approve: 'bg-emerald-100 text-emerald-800',
+  dispatch: 'bg-indigo-100 text-indigo-800',
   reject: 'bg-red-100 text-red-800',
   settings: 'bg-slate-200 text-slate-800',
   reset: 'bg-slate-200 text-slate-800',

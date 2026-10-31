@@ -25,7 +25,7 @@ import {
 } from '../models/catalog';
 import { ProposalModel, SignalModel, type ProposalDoc } from '../models/pipeline';
 import { SettingsModel } from '../models/settings';
-import type { WorkOrderDoc } from '../models/workOrder';
+import { nextRequestReference, type WorkOrderDoc } from '../models/workOrder';
 import { findDuplicateCandidates, recentRepairCount, repeatIssueNote } from './ground';
 import { planNte, rankVendors, type VendorRanking } from './plan';
 import {
@@ -53,6 +53,7 @@ export class SignalInputError extends Error {}
 
 interface Normalized {
   signalId: string;
+  reference: string | null;
   type: SignalInput['type'];
   site: SiteDoc;
   assets: AssetDoc[];
@@ -69,6 +70,8 @@ interface Pass {
   usage: TokenUsage;
   latencyMs: number;
 }
+
+const capitalize = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 
 const ZERO_USAGE: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 const addUsage = (a: TokenUsage, b: TokenUsage): TokenUsage => ({
@@ -97,20 +100,25 @@ export async function resolveSiteId(input: SignalInput): Promise<string> {
 }
 
 /** Creates the Signal record. The pipeline then runs on it (in the background for the API). */
-export async function createSignal(input: SignalInput, now = new Date()): Promise<string> {
+export async function createSignal(
+  input: SignalInput,
+  now = new Date(),
+): Promise<{ id: string; reference: string | null }> {
   const siteId = await resolveSiteId(input);
   const id = newId('sig');
+  const reference = input.type === 'request' ? await nextRequestReference() : null;
   await SignalModel.create({
     _id: id,
     type: input.type,
     siteId,
     input,
+    reference,
     receivedAt: now,
     status: 'processing',
     proposalId: null,
     error: null,
   });
-  return id;
+  return { id, reference };
 }
 
 /** Runs steps 1-7 for a stored signal and returns the saved proposal. */
@@ -169,6 +177,7 @@ export async function runPipeline(signalId: string, deps: PipelineDeps): Promise
       _id: proposalId,
       signalId,
       signalType: n.type,
+      reference: n.reference,
       inputText: n.text,
       status: autonomy === 'advise' ? 'advisory' : 'proposed',
       action: result.duplicate ? 'merge' : 'create',
@@ -295,7 +304,16 @@ async function normalize(
     outputSummary: text,
     reason: sensor ? `Urgency from data: ${sensor.urgency}. ${sensor.urgencyReason}` : null,
   });
-  return { signalId, type: input.type, site, assets, text, sensorAsset, sensor };
+  return {
+    signalId,
+    reference: signal.reference ?? null,
+    type: input.type,
+    site,
+    assets,
+    text,
+    sensorAsset,
+    sensor,
+  };
 }
 
 // ---- Step 2 --------------------------------------------------------------------------------
@@ -403,7 +421,7 @@ async function groundAndPlan(
 ): Promise<PlanResult> {
   const u = pass.understanding;
   let urgency = u?.urgency ?? 'routine';
-  let urgencyReason = u?.urgencyReason ?? 'The model could not read this request.';
+  let urgencyReason = u ? capitalize(u.urgencyReason) : 'The model could not read this request.';
   let usage = ZERO_USAGE;
 
   // Step 3: safety rules (code, cannot be overridden).
@@ -513,7 +531,8 @@ async function groundAndPlan(
     ? rankVendors(vendorDocs, n.site, planTrade, urgency, now)
     : { top: [], excluded: [] };
 
-  const title = u?.problemSummary ?? 'Unclear request: needs review';
+  const summary = u?.problemSummary.trim() ?? '';
+  const title = summary ? capitalize(summary) : 'Unclear request: needs review';
   const draft: WorkOrderDraft = {
     siteId: n.site._id,
     assetId,

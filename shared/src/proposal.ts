@@ -57,6 +57,8 @@ export const Proposal = z.object({
   id: z.string(),
   signalId: z.string(),
   signalType: z.enum(['request', 'sensor']),
+  /** Short number given to the requester, e.g. REQ-1042. Null for sensor signals. */
+  reference: z.string().nullable(),
   /** What came in: the request text, or the sensor reading in words. */
   inputText: z.string(),
   status: ProposalStatus,

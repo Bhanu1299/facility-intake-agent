@@ -92,3 +92,13 @@ export async function nextWorkOrderNumber(): Promise<string> {
   );
   return `WO-${counter.seq}`;
 }
+
+/** Short reference handed to the requester on the confirmation page: REQ-1001, REQ-1002, ... */
+export async function nextRequestReference(): Promise<string> {
+  const counter = await CounterModel.findOneAndUpdate(
+    { _id: 'request' },
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true },
+  );
+  return `REQ-${1000 + counter.seq}`;
+}
