@@ -22,21 +22,21 @@ const MODES: {
     mode: 'advise',
     label: 'Advise',
     phase: 'Phase 1',
-    help: 'Analysis only. Nothing can be approved.',
+    help: 'Analysis only, no approvals',
     enabled: true,
   },
   {
     mode: 'propose',
     label: 'Propose',
     phase: 'Phase 2',
-    help: 'Drafts work orders. A manager approves every action.',
+    help: 'You approve every action',
     enabled: true,
   },
   {
     mode: 'auto',
     label: 'Auto',
     phase: 'Phase 3',
-    help: 'Not built in this prototype.',
+    help: 'Not built in this prototype',
     enabled: false,
   },
 ];
@@ -45,9 +45,11 @@ function AutonomyDial() {
   const { mode, setMode } = useApp();
   const [error, setError] = useState<string | null>(null);
   const current = MODES.find((m) => m.mode === mode);
+  const note = error ?? (current ? `${current.phase} · ${current.help}` : 'Loading…');
 
   return (
-    <div className="flex flex-col items-start gap-1">
+    // inline-grid + w-0/min-w-full: the note takes the dial's width and never resizes it.
+    <div className="inline-grid shrink-0 gap-1">
       <div
         role="radiogroup"
         aria-label="Autonomy"
@@ -79,8 +81,11 @@ function AutonomyDial() {
           </button>
         ))}
       </div>
-      <span className="text-xs text-slate-500">
-        {error ?? (current ? `${current.phase}: ${current.help}` : 'Loading autonomy…')}
+      <span
+        className={`w-0 min-w-full truncate text-xs ${error ? 'text-red-700' : 'text-slate-500'}`}
+        title={note}
+      >
+        {note}
       </span>
     </div>
   );
@@ -107,11 +112,13 @@ function ResetButton() {
     }
     if (state !== 'confirm') return;
     setState('busy');
+    // resetDemo resolves as soon as the request returns; it then bumps `version`, which makes
+    // every page (the inbox included) refetch.
     resetDemo()
       .then(() => {
+        setState('done');
         // Drop ?p= and filters: they point at records the reset just deleted.
         if (location.search) navigate(location.pathname, { replace: true });
-        setState('done');
       })
       .catch((e: unknown) => {
         setError(e instanceof Error ? e.message : 'Reset failed');
@@ -121,9 +128,9 @@ function ResetButton() {
 
   const label = {
     idle: 'Reset demo',
-    confirm: 'Click again to reset',
+    confirm: 'Confirm reset',
     busy: 'Resetting…',
-    done: 'Demo reset ✓',
+    done: 'Reset ✓',
     error: 'Reset failed',
   }[state];
 
@@ -137,7 +144,8 @@ function ResetButton() {
           ? error
           : 'Reload the fake demo data (clears proposals and new work orders)'
       }
-      className={`rounded-lg px-3 py-1.5 text-sm font-medium ring-1 ring-inset transition-colors ${
+      // Fixed width: the label swaps inside the same box so the header never shifts.
+      className={`w-32 shrink-0 whitespace-nowrap rounded-lg py-1.5 text-center text-sm font-medium ring-1 ring-inset transition-colors ${
         state === 'confirm'
           ? 'bg-amber-50 text-amber-900 ring-amber-300'
           : state === 'error'
@@ -154,12 +162,12 @@ export function Layout() {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
       <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-6 gap-y-3 px-4 py-3">
-          <div className="flex items-center gap-2">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-6 gap-y-3 px-4 py-3 lg:flex-nowrap lg:gap-x-4">
+          <div className="flex shrink-0 items-center gap-2">
             <img src="/favicon.svg" alt="" className="h-7 w-7" />
             <span className="text-lg font-semibold tracking-tight">Intake Agent</span>
           </div>
-          <nav className="order-last -mx-1 flex w-full flex-wrap gap-1 px-1 md:order-none md:w-auto md:flex-1">
+          <nav className="order-last -mx-1 flex w-full flex-wrap gap-1 px-1 md:order-none md:w-auto md:flex-1 lg:flex-nowrap">
             {NAV.map((item) => (
               <NavLink
                 key={item.to}
@@ -175,7 +183,7 @@ export function Layout() {
               </NavLink>
             ))}
           </nav>
-          <div className="flex flex-wrap items-center gap-4">
+          <div className="flex shrink-0 items-center gap-4">
             <AutonomyDial />
             <ResetButton />
           </div>
