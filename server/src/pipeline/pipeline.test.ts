@@ -343,6 +343,7 @@ describe('signals API', () => {
       .send({ type: 'request', siteId: 'canalside', text: 'womens toilet clogged' })
       .expect(202);
     expect(res.body.status).toBe('processing');
+    expect(res.body.safetyRuleId).toBeNull();
     await app.locals.pipelines.idle();
 
     const signal = await request(app).get(`/api/signals/${res.body.signalId}`).expect(200);
@@ -353,6 +354,16 @@ describe('signals API', () => {
     expect(Proposal.parse(one.body).signalId).toBe(res.body.signalId);
     const log = await request(app).get(`/api/activity?proposalId=${one.body.id}`).expect(200);
     expect(log.body.length).toBeGreaterThanOrEqual(7);
+  });
+
+  it('returns the safety rule with the 202 so the requester gets guidance at once', async () => {
+    const app = createApp(env, { llm: new FakeLlm(() => understanding({})) });
+    const res = await request(app)
+      .post('/api/signals')
+      .send({ type: 'request', siteId: 'elmwood', text: 'it smells like gas in the kitchen' })
+      .expect(202);
+    expect(res.body.safetyRuleId).toBe('gas_smell');
+    await app.locals.pipelines.idle();
   });
 
   it('rejects invalid bodies and unknown sites/assets with 400', async () => {

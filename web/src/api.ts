@@ -56,7 +56,11 @@ async function call<T>(
 
 const SensorReadingRow = SensorReading;
 
-export const SignalAccepted = z.object({ signalId: z.string(), status: z.string() });
+export const SignalAccepted = z.object({
+  signalId: z.string(),
+  status: z.string(),
+  safetyRuleId: z.string().nullable().optional(),
+});
 export const AutonomyResponse = z.object({ mode: AutonomyMode, available: z.array(AutonomyMode) });
 export const ApprovalResponse = z.object({
   proposal: Proposal,

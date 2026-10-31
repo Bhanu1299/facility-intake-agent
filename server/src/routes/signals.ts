@@ -7,6 +7,7 @@ import {
   SignalInputError,
   type PipelineDeps,
 } from '../pipeline/pipeline';
+import { checkSafety } from '../pipeline/safety';
 
 /** Tracks background pipeline runs so tests (and graceful shutdown) can wait for them. */
 export class PipelineRunner {
@@ -33,7 +34,10 @@ async function accept(
   try {
     const signalId = await createSignal(input);
     runner.start(signalId);
-    return { status: 202, body: { signalId, status: 'processing' } };
+    // The safety check is pure code, so the requester can get guidance before the model runs.
+    const safetyRuleId =
+      input.type === 'request' ? (checkSafety(input.text)?.ruleId ?? null) : null;
+    return { status: 202, body: { signalId, status: 'processing', safetyRuleId } };
   } catch (err) {
     if (err instanceof SignalInputError) return { status: 400, body: { error: err.message } };
     throw err;

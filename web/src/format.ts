@@ -10,6 +10,10 @@ export const TRADE_LABEL: Record<TradeOrUnknown, string> = {
   unknown: 'Unknown',
 };
 
+/** Gas lines are plumber work; say so, so it reads as deliberate. */
+export const tradeLabel = (trade: TradeOrUnknown, safetyRuleId?: string | null): string =>
+  trade === 'plumbing' && safetyRuleId === 'gas_smell' ? 'Plumbing (gas)' : TRADE_LABEL[trade];
+
 export const TRADE_OPTIONS = Object.keys(TRADE_LABEL).filter((t) => t !== 'unknown') as Trade[];
 
 export const URGENCY_LABEL: Record<Urgency, string> = {

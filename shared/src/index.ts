@@ -6,3 +6,4 @@ export * from './proposal';
 export * from './activity';
 export * from './api';
 export * from './catalog';
+export * from './safety';

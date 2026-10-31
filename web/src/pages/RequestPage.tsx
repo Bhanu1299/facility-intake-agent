@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useParams } from 'react-router-dom';
+import { GENERIC_SAFETY_NOTE, safetyGuidance } from '@fia/shared';
 import { api, ApiError } from '../api';
 import { useAsync } from '../hooks';
 
@@ -10,6 +11,7 @@ export function RequestPage() {
   const [text, setText] = useState('');
   const [state, setState] = useState<'idle' | 'sending' | 'sent'>('idle');
   const [error, setError] = useState<string | null>(null);
+  const [guidance, setGuidance] = useState<string | null>(null);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -20,7 +22,8 @@ export function RequestPage() {
     setState('sending');
     setError(null);
     try {
-      await api.submitSignal({ type: 'request', siteId, text: text.trim() });
+      const res = await api.submitSignal({ type: 'request', siteId, text: text.trim() });
+      setGuidance(safetyGuidance(res.safetyRuleId));
       setState('sent');
       setText('');
     } catch (err) {
@@ -61,8 +64,16 @@ export function RequestPage() {
                   ✓
                 </div>
                 <h1 className="mt-4 text-2xl font-semibold">Thanks, it's been sent</h1>
+                {guidance && (
+                  <div
+                    role="alert"
+                    className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-left text-lg font-semibold text-red-900 ring-1 ring-red-200"
+                  >
+                    {guidance}
+                  </div>
+                )}
                 <p className="mt-2 text-lg text-slate-600">
-                  The facilities manager will review it. If anyone is in danger, call 911.
+                  The facilities manager will review it.{guidance ? '' : ` ${GENERIC_SAFETY_NOTE}`}
                 </p>
                 <button
                   type="button"

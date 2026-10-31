@@ -9,7 +9,7 @@ import {
 } from '@fia/shared';
 import { api } from '../api';
 import { useApp } from '../context';
-import { dateTime, money, TRADE_LABEL, TRADE_OPTIONS, URGENCY_LABEL } from '../format';
+import { dateTime, money, TRADE_OPTIONS, tradeLabel, URGENCY_LABEL } from '../format';
 import { useAsync } from '../hooks';
 import { BudgetBar } from './BudgetBar';
 import { Button, ErrorBanner, Field, inputClass, Section, Spinner, Tag, UrgencyBadge } from './ui';
@@ -181,6 +181,14 @@ function ProposalBody({ proposal: p, onChanged }: { proposal: Proposal; onChange
     <div className="pb-28">
       {/* Banners */}
       <div className="space-y-3 px-5 pt-4">
+        {p.safetyRule && open && (
+          <div
+            role="alert"
+            className="rounded-lg bg-red-600 px-4 py-3 text-sm font-semibold text-white"
+          >
+            Safety emergency: call the reporter and confirm the area is clear before dispatch.
+          </div>
+        )}
         {p.safetyRule && (
           <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-900 ring-1 ring-red-200">
             <p className="font-semibold">Safety rule: {p.safetyRule.label}</p>
@@ -254,7 +262,7 @@ function ProposalBody({ proposal: p, onChanged }: { proposal: Proposal; onChange
                   {form.trade === 'unknown' && <option value="unknown">Unknown</option>}
                   {TRADE_OPTIONS.map((t) => (
                     <option key={t} value={t}>
-                      {TRADE_LABEL[t]}
+                      {tradeLabel(t, p.safetyRule?.ruleId)}
                     </option>
                   ))}
                 </select>
@@ -350,7 +358,11 @@ function ProposalBody({ proposal: p, onChanged }: { proposal: Proposal; onChange
             <dd className="font-medium">{form.title}</dd>
             <dt className="text-slate-500">Trade</dt>
             <dd>
-              {form.trade === 'unknown' ? <Tag tone="amber">Unknown</Tag> : TRADE_LABEL[form.trade]}
+              {form.trade === 'unknown' ? (
+                <Tag tone="amber">Unknown</Tag>
+              ) : (
+                tradeLabel(form.trade, p.safetyRule?.ruleId)
+              )}
             </dd>
             <dt className="text-slate-500">Asset</dt>
             <dd>
