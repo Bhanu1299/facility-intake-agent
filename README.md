@@ -127,6 +127,9 @@ Of the 7 misses, 5 are urgency over-calls (rated one level more urgent than labe
 miss (torn walk-in cooler door seal sent to handyman, not refrigeration) and 1 is a missed
 needs-human flag (a loose, shaking ceiling AC vent).
 
+Known weakness: on an ambiguous HVAC report (two rooftop units, no room named) it left the unit
+blank but didn't flag the case for a human to ask. Over-calls lean toward caution; no under-calls.
+
 **Tune set** (`eval/report-tune.md`, the prompt as committed):
 
 | Metric                           | Result                         |
