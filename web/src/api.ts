@@ -4,6 +4,8 @@ import {
   Asset,
   AutonomyMode,
   Budget,
+  CallConfig,
+  CallRecord,
   HealthResponse,
   Proposal,
   SensorReading,
@@ -31,13 +33,16 @@ export class ApiError extends Error {
 async function call<T>(
   path: string,
   schema: z.ZodType<T>,
-  init?: { method?: string; body?: unknown },
+  init?: { method?: string; body?: unknown; headers?: Record<string, string> },
 ): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${API_URL}/api${path}`, {
       method: init?.method ?? 'GET',
-      headers: init?.body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      headers: {
+        ...(init?.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+        ...init?.headers,
+      },
       body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
     });
   } catch {
@@ -117,6 +122,21 @@ export const api = {
   autonomy: () => call('/settings/autonomy', AutonomyResponse),
   setAutonomy: (mode: z.infer<typeof AutonomyMode>) =>
     call('/settings/autonomy', AutonomyResponse, { method: 'PUT', body: { mode } }),
+  callConfig: () => call('/calls/config', CallConfig),
+  verifyAdminKey: (key: string) =>
+    call('/calls/verify-key', z.object({ ok: z.boolean(), enabled: z.boolean() }), {
+      method: 'POST',
+      headers: { 'X-Admin-Key': key },
+    }),
+  startCall: (workOrderId: string, key: string) =>
+    call(`/work-orders/${workOrderId}/call`, CallRecord, {
+      method: 'POST',
+      headers: { 'X-Admin-Key': key },
+    }),
+  workOrderCalls: (workOrderId: string) =>
+    call(`/work-orders/${workOrderId}/calls`, z.array(CallRecord)),
+  latestCall: () => call('/calls/latest', CallRecord.nullable()),
+
   resetDemo: () =>
     call('/demo/reset', z.object({ ok: z.boolean() }).passthrough(), { method: 'POST' }),
 };

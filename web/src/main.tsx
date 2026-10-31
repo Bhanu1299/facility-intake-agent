@@ -8,6 +8,7 @@ import { ActivityPage } from './pages/ActivityPage';
 import { InboxPage } from './pages/InboxPage';
 import { Placeholder } from './pages/Placeholder';
 import { RequestPage } from './pages/RequestPage';
+import { SettingsPage } from './pages/SettingsPage';
 import { SimulatorPage } from './pages/SimulatorPage';
 import { WorkOrdersPage } from './pages/WorkOrdersPage';
 
@@ -28,6 +29,7 @@ createRoot(document.getElementById('root')!).render(
           <Route path="work-orders" element={<WorkOrdersPage />} />
           <Route path="activity" element={<ActivityPage />} />
           <Route path="simulator" element={<SimulatorPage />} />
+          <Route path="settings" element={<SettingsPage />} />
           <Route path="*" element={<Placeholder title="Not found" note="No such page." />} />
         </Route>
       </Routes>

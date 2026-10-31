@@ -27,11 +27,17 @@ function statusLine(p: Proposal | undefined, adviseMode: boolean): string {
     case 'proposed':
       return adviseMode
         ? 'Draft work order · approvals are off in Advise mode'
-        : 'Draft work order · waiting on you';
+        : p.action === 'reassign'
+          ? 'Reassignment · waiting on you'
+          : 'Draft work order · waiting on you';
     case 'advisory':
       return 'Advice only · switch to Propose to act on it';
     case 'approved':
-      return p.action === 'merge' ? 'Merged · approved by you' : 'Approved · work order created';
+      return p.action === 'merge'
+        ? 'Merged · approved by you'
+        : p.action === 'reassign'
+          ? 'Reassigned · new vendor dispatched'
+          : 'Approved · work order created';
     case 'rejected':
       return 'Rejected';
   }
@@ -219,6 +225,19 @@ function ProposalBody({ proposal: p, onChanged }: { proposal: Proposal; onChange
             {p.needsHumanReason && <p className="mt-1 text-amber-800">Why: {p.needsHumanReason}</p>}
           </div>
         )}
+        {p.reassign && (
+          <div className="rounded-lg bg-fuchsia-50 px-4 py-3 text-sm text-fuchsia-950 ring-1 ring-fuchsia-200">
+            <p className="font-semibold">
+              {p.reassign.previousVendorName} declined {p.reassign.workOrderNumber} on the dispatch
+              call
+            </p>
+            <p className="mt-1">Reason: {p.reassign.reason}</p>
+            <p className="mt-1 text-fuchsia-800">
+              Approving dispatches the same work order to the vendor below. The NTE is already
+              committed; only the vendor changes.
+            </p>
+          </div>
+        )}
         {p.status === 'advisory' && (
           <div className="rounded-lg bg-slate-100 px-4 py-3 text-sm text-slate-700">
             Made in Advise mode: analysis only.{' '}
@@ -247,7 +266,13 @@ function ProposalBody({ proposal: p, onChanged }: { proposal: Proposal; onChange
 
       {/* Draft work order */}
       <Section
-        title={p.action === 'merge' ? 'Proposed update to existing work order' : 'Draft work order'}
+        title={
+          p.action === 'merge'
+            ? 'Proposed update to existing work order'
+            : p.reassign
+              ? `Reassign ${p.reassign.workOrderNumber}`
+              : 'Draft work order'
+        }
         aside={
           open && !editing ? (
             <Button variant="ghost" onClick={() => setEditing(true)}>
@@ -256,7 +281,41 @@ function ProposalBody({ proposal: p, onChanged }: { proposal: Proposal; onChange
           ) : null
         }
       >
-        {editing ? (
+        {editing && p.action === 'reassign' ? (
+          <div className="grid gap-3">
+            <Field label="Vendor" hint="A reassignment only changes the vendor.">
+              <select
+                className={inputClass}
+                value={form.vendorId ?? ''}
+                onChange={(e) => set('vendorId', e.target.value || null)}
+              >
+                <option value="">Choose a vendor</option>
+                {vendorOptions
+                  .filter((id) => id !== p.reassign?.previousVendorId)
+                  .map((id) => (
+                    <option key={id} value={id}>
+                      {vendorName(id)}
+                      {p.vendors[0]?.vendorId === id ? ' (recommended)' : ''}
+                    </option>
+                  ))}
+              </select>
+            </Field>
+            <div className="flex gap-2">
+              <Button variant="primary" onClick={save} disabled={busy !== null}>
+                {busy === 'save' ? 'Saving…' : 'Save changes'}
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setForm(p.draft);
+                  setEditing(false);
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : editing ? (
           <div className="grid gap-3">
             <Field label="Title">
               <input
@@ -545,7 +604,9 @@ function ProposalBody({ proposal: p, onChanged }: { proposal: Proposal; onChange
                   ? 'Approving…'
                   : p.action === 'merge'
                     ? `Approve merge into ${p.duplicate?.workOrderNumber}`
-                    : 'Approve & dispatch'}
+                    : p.action === 'reassign'
+                      ? 'Approve & dispatch to new vendor'
+                      : 'Approve & dispatch'}
               </Button>
               <Button
                 variant="danger"

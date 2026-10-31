@@ -1,4 +1,11 @@
-import type { Trade, TradeOrUnknown, Urgency, WorkOrderStatus } from '@fia/shared';
+import type {
+  CallOutcome,
+  CallStatus,
+  Trade,
+  TradeOrUnknown,
+  Urgency,
+  WorkOrderStatus,
+} from '@fia/shared';
 
 export const TRADE_LABEL: Record<TradeOrUnknown, string> = {
   plumbing: 'Plumbing',
@@ -68,4 +75,32 @@ export const dateTime = (iso: string): string =>
     day: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
+  });
+
+export const CALL_STATUS_LABEL: Record<CallStatus, string> = {
+  queued: 'Queued',
+  ringing: 'Ringing',
+  in_call: 'In call',
+  ended: 'Ended',
+};
+
+export const CALL_OUTCOME_LABEL: Record<CallOutcome, string> = {
+  confirmed: 'Confirmed',
+  declined: 'Declined',
+  callback_requested: 'Callback requested',
+  opted_out: 'Asked not to be called',
+  ended: 'Ended without a decision · email fallback used',
+  email_fallback: 'Email fallback used',
+};
+
+/** Absolute local time for ETAs, in the sites' zone (all sites are in Buffalo). */
+export const siteTime = (iso: string): string =>
+  new Date(iso).toLocaleString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone: 'America/New_York',
+    timeZoneName: 'short',
   });

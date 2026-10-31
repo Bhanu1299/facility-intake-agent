@@ -160,6 +160,64 @@ What tuning showed (four full runs, tune set only):
   **33/40 with 0 under-calls**; this is the committed prompt. Remaining misses are over-calls by one
   level and two asset picks.
 
+## Vendor call (optional)
+
+After a manager approves a work order, an admin can have an AI voice agent phone the vendor to
+confirm the job and an arrival time. The drafted dispatch email stays as the fallback and the
+record.
+
+**How the loop works.** The server places an outbound call with Twilio Programmable Voice
+(`Calls.create`) and runs its own turn loop. Each turn is TwiML `<Say>` followed by
+`<Gather input="speech">`. Twilio posts what the vendor said (`SpeechResult`) to a webhook, and the
+server asks the Groq small model for one strict-schema decision: what to say next and an action
+(`continue`, `confirm_job`, `decline_job`, `request_callback` or `end`). The big model runs only if
+the small model's output fails validation. Call turns use their own client with no retries, a 5 s
+timeout and a token cap. If the model is slow the agent says "Sorry, one moment" and tries once
+more, then ends with "we'll follow up by email". Code, not the model, handles these parts:
+
+- **Stop phrases.** "Stop", "not interested", "wrong number", "remove me", "don't call" and "no
+  thanks" end the call before the model sees the turn.
+- **Arrival times.** "Tomorrow at 9" and "in two hours" are resolved in the site's time zone
+  (America/New_York). The agent reads the time back, and the job is only confirmed after a yes.
+- **Limits.** Six vendor turns at most. With no speech the agent asks again once, then ends.
+
+**What happens after the call**
+
+| Outcome                                   | Effect                                                                                        |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Confirmed                                 | Work order `dispatched → accepted` with the ETA; Activity Log entry with a transcript summary |
+| Declined                                  | Back to `approved` (budget commitment kept) and a new proposal for the next vendor to approve |
+| Callback requested                        | Time and reason stored; work order stays `dispatched`                                         |
+| No answer, busy, failed, silence, stopped | "Email fallback used": the drafted dispatch email is the record                               |
+
+**Disclosure.** Every call opens with: "Hi, this is an automated assistant calling on behalf of
+Harbor and Hearth Kitchen about a maintenance job. Our callback number is <number, digit by
+digit>. Say stop at any time to end the call."
+
+**Demo safety.** The app only ever dials `DEMO_VENDOR_PHONE`, the author's own verified number,
+from a shared Twilio trial number. The seeded vendor phone numbers are fake and are never dialed;
+one function picks the number and a test checks it. Calls need `CALLS_ENABLED=true` on the server
+_and_ the admin key (entered under Settings, kept in session storage). Visitors without the key
+see the most recent stored call, labeled "Recorded demo call". The server allows at most 3 calls
+an hour, Twilio cuts each call at 180 seconds, and every Twilio webhook must carry a valid
+`X-Twilio-Signature` (403 otherwise). Only the agent's own turn-by-turn transcript is stored. Calls
+are not recorded.
+
+**Trial account.** Twilio trial accounts can only call verified numbers, and a short trial message
+plays before the agent starts. The callee has to press a key to connect, and the call status in the
+UI says so.
+
+**Real use** needs a purchased Twilio number and vendor consent to automated calls, for example in
+the vendor contract. The FCC treats AI-generated voices as "artificial" voices under the TCPA.
+
+**Trade-off.** Turns are taken one at a time, so expect a pause of about 1 to 2 seconds while the
+model answers, and the vendor can't interrupt the agent mid-sentence. A streaming voice stack would
+fix both but costs more and has more moving parts.
+
+Settings (server only): `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`,
+`DEMO_VENDOR_PHONE`, `CALL_ADMIN_KEY`, `CALLS_ENABLED` (default `false`) and `PUBLIC_API_URL` (the
+public API URL that Twilio webhooks are built and signed on).
+
 ## Privacy
 
 - **Runs entirely on your infrastructure, with your database and your API key.** The server only
@@ -168,7 +226,8 @@ What tuning showed (four full runs, tune set only):
 - **The model sees as little as possible:** the request text (or the sensor reading in words), the
   site name and that site's asset list (id, name, location). For the duplicate check it sees the
   new report and the open work order's title, description and location, and answers yes or no. Budgets,
-  vendor prices, vendor details and repair history never go to the model.
+  vendor prices, vendor details and repair history never go to the model. On a vendor call it
+  sees the work order's details, the NTE, the vendor's name and the call transcript.
 - **Keys come only from env.** `.env` is git-ignored. The Groq key lives on the server only and is
   never sent to the browser.
 - **Recommended:** turn on Groq **Zero Data Retention** in the Groq console under Data Controls.
@@ -225,4 +284,6 @@ Directory = repo root, `VITE_API_URL` = the Render URL), MongoDB Atlas free clus
   duplicate detection only looks back 72 hours. On the live demo, press **Reset demo** before
   trying the duplicate examples.
 - No auth or roles, a single tenant, no PII scrubbing, and no real IoT integration (out of scope).
-  Work orders stop at `dispatched`; vendor acceptance and completion aren't modeled.
+  Vendor acceptance comes from the optional dispatch call; `in_progress` and `completed` aren't
+  modeled.
+- **Vendor calls are a demo.** They only ring the author's own phone from a Twilio trial number.

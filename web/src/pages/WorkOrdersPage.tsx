@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { WORK_ORDER_STATUSES, type WorkOrder, type WorkOrderStatus } from '@fia/shared';
 import { api } from '../api';
 import { useApp } from '../context';
-import { dateTime, money, STATUS_LABEL, TRADE_LABEL } from '../format';
+import { dateTime, money, siteTime, STATUS_LABEL, TRADE_LABEL } from '../format';
 import { useAsync } from '../hooks';
 import {
   Empty,
@@ -15,6 +15,7 @@ import {
   Tag,
   UrgencyBadge,
 } from '../components/ui';
+import { VendorCallPanel } from '../components/VendorCallPanel';
 
 const PAGE_SIZE = 25;
 
@@ -111,6 +112,7 @@ export function WorkOrdersPage() {
                   onToggle={() => setOpenId(openId === w.id ? null : w.id)}
                   siteName={siteName(w.siteId)}
                   vendorName={vendorName(w.vendorId)}
+                  onChanged={wos.reload}
                 />
               ))}
             </tbody>
@@ -136,12 +138,14 @@ function Row({
   onToggle,
   siteName,
   vendorName,
+  onChanged,
 }: {
   wo: WorkOrder;
   open: boolean;
   onToggle: () => void;
   siteName: string;
   vendorName: string;
+  onChanged: () => void;
 }) {
   return (
     <>
@@ -161,9 +165,14 @@ function Row({
         </td>
         <td className="md:px-4 md:py-3">
           <StatusBadge status={wo.status} />
+          {wo.eta && (
+            <span className="mt-1 block text-xs text-slate-500">ETA {siteTime(wo.eta)}</span>
+          )}
         </td>
         <td className="text-sm md:px-4 md:py-3">{siteName}</td>
-        <td className="text-sm md:px-4 md:py-3">{vendorName}</td>
+        <td className="text-sm md:px-4 md:py-3">
+          {wo.vendorId ? vendorName : wo.status === 'approved' ? 'Needs a new vendor' : vendorName}
+        </td>
         <td className="text-sm font-medium tabular-nums md:px-4 md:py-3 md:text-right">
           {money(wo.nte)}
           {wo.actualCost !== null && (
@@ -205,6 +214,7 @@ function Row({
                 </pre>
               </div>
             )}
+            <VendorCallPanel wo={wo} onChanged={onChanged} />
             <Link
               to={`/activity?workOrderId=${wo.id}`}
               className="mt-2 inline-block text-sm text-teal-800 underline"

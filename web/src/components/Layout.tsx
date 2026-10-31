@@ -9,6 +9,7 @@ const NAV = [
   { to: '/work-orders', label: 'Work Orders' },
   { to: '/activity', label: 'Activity Log' },
   { to: '/simulator', label: 'Sensor simulator' },
+  { to: '/settings', label: 'Settings' },
 ];
 
 const MODES: {
@@ -197,7 +198,7 @@ export function Layout() {
       </main>
       <footer className="mx-auto max-w-7xl px-4 pb-8 text-xs text-slate-500">
         Prototype with fake data (Harbor &amp; Hearth Kitchen is fictional). Dispatch emails are
-        drafted, never sent.
+        drafted, never sent. Vendor calls only ever ring the author's own demo phone.
       </footer>
     </div>
   );

@@ -136,6 +136,7 @@ export function InboxPage() {
                   {p.action === 'merge' && (
                     <Tag tone="violet">Merge · {p.duplicate?.workOrderNumber}</Tag>
                   )}
+                  {p.reassign && <Tag tone="violet">Reassign · {p.reassign.workOrderNumber}</Tag>}
                   {p.budget.needsBudgetIncrease && <Tag tone="amber">Over budget</Tag>}
                   {p.status !== 'proposed' && <Tag>{p.status}</Tag>}
                   <span className="whitespace-nowrap text-sm text-slate-500">
