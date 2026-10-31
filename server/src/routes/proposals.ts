@@ -1,5 +1,10 @@
 import { Router, type Response } from 'express';
-import { ProposalStatus, RejectProposalInput, WorkOrderDraftPatch } from '@fia/shared';
+import {
+  ProposalStatus,
+  RejectProposalInput,
+  WorkOrderDraftPatch,
+  compareForInbox,
+} from '@fia/shared';
 import { ActivityModel, ProposalModel } from '../models/pipeline';
 import { ApprovalError, approveProposal, editProposal, rejectProposal } from '../workflow/approval';
 
@@ -23,7 +28,8 @@ export function proposalsRouter(): Router {
   router.get('/proposals', async (req, res) => {
     const status = ProposalStatus.safeParse(req.query.status);
     const filter = status.success ? { status: status.data } : {};
-    res.json(await ProposalModel.find(filter).sort({ createdAt: -1 }).limit(200));
+    const proposals = await ProposalModel.find(filter).sort({ createdAt: -1 }).limit(200);
+    res.json(proposals.sort(compareForInbox));
   });
 
   router.get('/proposals/:id', async (req, res) => {

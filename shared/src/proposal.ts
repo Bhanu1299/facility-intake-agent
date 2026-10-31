@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ProposalStatus } from './enums';
+import { ProposalStatus, URGENCY_RANK } from './enums';
 import { WorkOrderDraft } from './workOrder';
 
 export const VendorRecommendation = z.object({
@@ -94,3 +94,17 @@ export const RejectProposalInput = z.object({
   reason: z.string().trim().min(3).max(1000),
 });
 export type RejectProposalInput = z.infer<typeof RejectProposalInput>;
+
+interface InboxSortable {
+  draft: Pick<Proposal['draft'], 'urgency'>;
+  needsHuman: boolean;
+  createdAt: string | Date;
+}
+
+/** Inbox order: most urgent first, then needs-human, then newest. */
+export function compareForInbox(a: InboxSortable, b: InboxSortable): number {
+  const byUrgency = URGENCY_RANK[b.draft.urgency] - URGENCY_RANK[a.draft.urgency];
+  if (byUrgency !== 0) return byUrgency;
+  if (a.needsHuman !== b.needsHuman) return a.needsHuman ? -1 : 1;
+  return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+}

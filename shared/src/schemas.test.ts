@@ -5,6 +5,7 @@ import {
   WorkOrderDraftPatch,
   URGENCIES,
   URGENCY_RANK,
+  compareForInbox,
 } from './index';
 
 describe('SignalInput', () => {
@@ -81,5 +82,33 @@ describe('urgency ranking', () => {
   it('ranks every urgency, most urgent highest', () => {
     const ranks = URGENCIES.map((u) => URGENCY_RANK[u]);
     expect(ranks).toEqual([3, 2, 1, 0]);
+  });
+});
+
+describe('compareForInbox', () => {
+  const p = (urgency: (typeof URGENCIES)[number], needsHuman: boolean, createdAt: string) => ({
+    draft: { urgency },
+    needsHuman,
+    createdAt,
+  });
+
+  it('puts urgency first, then needs-human, then newest', () => {
+    const routineNew = p('routine', true, '2026-10-31T12:00:00Z');
+    const emergencyOld = p('emergency', false, '2026-10-01T12:00:00Z');
+    const urgentPlain = p('urgent', false, '2026-10-31T11:00:00Z');
+    const urgentHuman = p('urgent', true, '2026-10-30T11:00:00Z');
+    const urgentPlainNewer = p('urgent', false, '2026-10-31T11:30:00Z');
+    const low = p('low', true, '2026-10-31T13:00:00Z');
+    const sorted = [routineNew, low, urgentPlain, emergencyOld, urgentPlainNewer, urgentHuman].sort(
+      compareForInbox,
+    );
+    expect(sorted).toEqual([
+      emergencyOld,
+      urgentHuman,
+      urgentPlainNewer,
+      urgentPlain,
+      routineNew,
+      low,
+    ]);
   });
 });
