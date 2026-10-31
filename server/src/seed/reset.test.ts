@@ -1,8 +1,9 @@
 import request from 'supertest';
-import { Asset, Budget, Site, Vendor } from '@fia/shared';
+import { Asset, Budget, Site, Vendor, WorkOrder } from '@fia/shared';
 import { createApp } from '../app';
 import { useTestDb } from '../test/db';
-import { SiteModel } from '../models/catalog';
+import { SensorReadingModel, SiteModel } from '../models/catalog';
+import { ActivityModel } from '../models/pipeline';
 import { WorkOrderModel } from '../models/workOrder';
 import { ensureSeeded, resetDemoData } from './reset';
 
@@ -19,6 +20,17 @@ describe('demo data reset', () => {
     await WorkOrderModel.deleteMany({});
     await resetDemoData('propose');
     expect(await WorkOrderModel.countDocuments()).toBe(106);
+  });
+
+  it('reset rebuilds the indexes it drops and can run back to back', async () => {
+    await resetDemoData('propose');
+    const summary = await resetDemoData('propose');
+    expect(summary.timingsMs.total).toBeGreaterThanOrEqual(0);
+    expect(await SensorReadingModel.countDocuments()).toBe(summary.sensorReadings);
+    const readingIndexes = await SensorReadingModel.collection.indexes();
+    expect(readingIndexes.map((i) => i.key)).toContainEqual({ assetId: 1, readingAt: -1 });
+    const activityIndexes = await ActivityModel.collection.indexes();
+    expect(activityIndexes.map((i) => i.key)).toContainEqual({ proposalId: 1, timestamp: 1 });
   });
 
   it('POST /api/demo/reset reseeds and catalog endpoints return valid shapes', async () => {
@@ -40,6 +52,13 @@ describe('demo data reset', () => {
     const parsed = budgets.body.map((b: unknown) => Budget.parse(b));
     const cheek = parsed.find((b: Budget) => b.siteId === 'cheektowaga')!;
     expect(cheek.available).toBe(350);
+
+    // Bulk inserts skip schema defaults, so every seeded work order must still be complete.
+    const wos = await request(app).get('/api/work-orders').expect(200);
+    expect(wos.body).toHaveLength(106);
+    wos.body.forEach((w: unknown) => WorkOrder.parse(w));
+    const autonomy = await request(app).get('/api/settings/autonomy').expect(200);
+    expect(autonomy.body.mode).toBe('propose');
   });
 
   it('rate limits the reset endpoint per IP', async () => {

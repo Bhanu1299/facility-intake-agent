@@ -11,7 +11,7 @@ export function demoRouter(env: Env, limiter: RequestHandler): Router {
     await logActivity({
       step: 'reset',
       actor: 'manager',
-      outputSummary: `Demo data reset: ${summary.workOrders} work orders, ${summary.vendors} vendors, ${summary.sites} sites`,
+      outputSummary: `Demo data reset: ${summary.workOrders} work orders, ${summary.vendors} vendors, ${summary.sites} sites in ${(summary.timingsMs.total / 1000).toFixed(1)} s`,
     });
     res.json({ ok: true, ...summary });
   });

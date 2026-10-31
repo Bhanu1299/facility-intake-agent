@@ -17,30 +17,48 @@ export interface ResetSummary {
   vendors: number;
   workOrders: number;
   sensorReadings: number;
+  /** Phase timings, so a slow reset on the hosted database can be diagnosed. */
+  timingsMs: { wipe: number; insert: number; indexes: number; total: number };
 }
+
+// The seed is generated in code and already valid: skip per-document validation and hydration,
+// and let the server apply each batch in any order.
+const BULK = { ordered: false, lean: true } as const;
 
 /**
  * Wipes every collection (including proposals, signals and the activity log) and reloads the
- * demo dataset anchored to `now`.
+ * demo dataset anchored to `now`. Collections are dropped rather than emptied (deleting ~8k
+ * sensor readings one by one is slow on a shared cluster), loaded in parallel, and indexed
+ * after the data is in.
  */
 export async function resetDemoData(
   autonomyMode: AutonomyMode,
   now: Date = new Date(),
 ): Promise<ResetSummary> {
+  const started = Date.now();
   const data = generateSeedData(now);
 
-  await Promise.all(Object.values(mongoose.connection.collections).map((c) => c.deleteMany({})));
-  // Make sure indexes exist (e.g. after a fresh database).
-  await Promise.all(Object.values(mongoose.models).map((m) => m.init()));
+  const collections = await mongoose.connection
+    .db!.listCollections({}, { nameOnly: true })
+    .toArray();
+  await Promise.all(collections.map((c) => mongoose.connection.db!.dropCollection(c.name)));
+  const wiped = Date.now();
 
-  await SiteModel.insertMany(data.sites);
-  await AssetModel.insertMany(data.assets);
-  await VendorModel.insertMany(data.vendors);
-  await BudgetModel.insertMany(data.budgets);
-  await WorkOrderModel.insertMany(data.workOrders);
-  await SensorReadingModel.insertMany(data.sensorReadings, { lean: true });
-  await CounterModel.create({ _id: 'workOrder', seq: data.nextWorkOrderSeq });
-  await SettingsModel.create({ _id: 'global', autonomyMode });
+  await Promise.all([
+    SiteModel.insertMany(data.sites, BULK),
+    AssetModel.insertMany(data.assets, BULK),
+    VendorModel.insertMany(data.vendors, BULK),
+    BudgetModel.insertMany(data.budgets, BULK),
+    WorkOrderModel.insertMany(data.workOrders, BULK),
+    SensorReadingModel.insertMany(data.sensorReadings, BULK),
+    CounterModel.insertMany([{ _id: 'workOrder', seq: data.nextWorkOrderSeq }], BULK),
+    SettingsModel.insertMany([{ _id: 'global', autonomyMode }], BULK),
+  ]);
+  const inserted = Date.now();
+
+  // Dropping removed the indexes; rebuild them (this also creates the empty collections).
+  await Promise.all(Object.values(mongoose.models).map((m) => m.createIndexes()));
+  const indexed = Date.now();
 
   return {
     sites: data.sites.length,
@@ -48,6 +66,12 @@ export async function resetDemoData(
     vendors: data.vendors.length,
     workOrders: data.workOrders.length,
     sensorReadings: data.sensorReadings.length,
+    timingsMs: {
+      wipe: wiped - started,
+      insert: inserted - wiped,
+      indexes: indexed - inserted,
+      total: indexed - started,
+    },
   };
 }
 
