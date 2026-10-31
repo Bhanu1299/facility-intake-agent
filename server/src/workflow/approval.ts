@@ -42,6 +42,15 @@ async function validateDraftRefs(draft: WorkOrderDraft): Promise<void> {
   }
 }
 
+/** A vendor who declined a work order on the dispatch call is never assigned it again. */
+async function assertNotDeclined(p: ProposalDoc, vendorId: string): Promise<void> {
+  const wo = p.reassign ? await WorkOrderModel.findById(p.reassign.workOrderId).lean() : null;
+  if (wo?.declinedVendorIds?.includes(vendorId)) {
+    const name = (await VendorModel.findById(vendorId).lean())?.name ?? vendorId;
+    throw new ApprovalError(`${name} already declined this job; choose another vendor`, 409);
+  }
+}
+
 function changedFields(before: WorkOrderDraft, after: WorkOrderDraft): (keyof WorkOrderDraft)[] {
   return (Object.keys(after) as (keyof WorkOrderDraft)[]).filter((k) => before[k] !== after[k]);
 }
@@ -51,6 +60,12 @@ export async function editProposal(id: string, patch: WorkOrderDraftPatch): Prom
   const p = await loadProposal(id);
   if (!APPROVABLE.includes(p.status as (typeof APPROVABLE)[number])) {
     throw new ApprovalError(`Proposal is ${p.status}; it can no longer be edited`, 409);
+  }
+  if (p.action === 'reassign') {
+    if (Object.keys(patch).some((k) => k !== 'vendorId')) {
+      throw new ApprovalError('A reassignment only changes the vendor', 400);
+    }
+    if (patch.vendorId) await assertNotDeclined(p, patch.vendorId);
   }
   const draft = WorkOrderDraft.parse({ ...p.draft, ...patch });
   await validateDraftRefs(draft);
@@ -163,13 +178,20 @@ export async function approveProposal(
   const site = await SiteModel.findById(draft.siteId).lean();
   if (!site) throw new ApprovalError('Site not found', 400);
 
-  const target =
-    p.action === 'merge' && p.duplicate
-      ? await WorkOrderModel.findById(p.duplicate.workOrderId).lean()
-      : null;
-  if (p.action === 'merge' && !target) {
-    throw new ApprovalError('The work order to merge into no longer exists', 409);
+  const targetId =
+    p.action === 'merge'
+      ? p.duplicate?.workOrderId
+      : p.action === 'reassign'
+        ? p.reassign?.workOrderId
+        : undefined;
+  const target = targetId ? await WorkOrderModel.findById(targetId).lean() : null;
+  if (p.action !== 'create' && !target) {
+    throw new ApprovalError(
+      `The work order to ${p.action === 'merge' ? 'merge into' : 'reassign'} no longer exists`,
+      409,
+    );
   }
+  if (p.action === 'reassign') await assertNotDeclined(p, vendor._id);
   const workOrderId = target?._id ?? `wo_${id}`;
 
   // 1. Claim the proposal atomically. Only one caller gets past this line.
@@ -182,6 +204,8 @@ export async function approveProposal(
   if (!claimed) return existingResult(id);
 
   try {
+    if (target && p.action === 'reassign')
+      return await applyReassign(claimed, target, vendor, site);
     return target
       ? await applyMerge(claimed, target, draft, vendor, site)
       : await applyCreate(claimed, workOrderId, { ...draft, trade }, vendor, site);
@@ -328,6 +352,61 @@ async function applyMerge(
     ]
       .filter(Boolean)
       .join('; '),
+  });
+  return {
+    proposal: (await ProposalModel.findById(p._id).lean())!,
+    workOrder: (await WorkOrderModel.findById(target._id).lean())!,
+    created: true,
+  };
+}
+
+/**
+ * Reassign after a declined dispatch call: the work order (back at approved, budget still
+ * committed) gets the new vendor, a fresh dispatch email, and moves to dispatched again.
+ */
+async function applyReassign(
+  p: ProposalDoc,
+  target: WorkOrderDoc,
+  vendor: Vendor,
+  site: Site,
+): Promise<ApprovalResult> {
+  if (target.status !== 'approved') {
+    if (target.status === 'dispatched' && target.vendorId === vendor._id) {
+      return {
+        proposal: (await ProposalModel.findById(p._id).lean())!,
+        workOrder: target,
+        created: false,
+      };
+    }
+    throw new ApprovalError(`${target.number} is ${target.status}; it can't be reassigned`, 409);
+  }
+  await logActivity({
+    step: 'approve',
+    actor: 'manager',
+    signalId: p.signalId,
+    proposalId: p._id,
+    workOrderId: target._id,
+    inputSummary: `Approved reassignment of ${target.number}`,
+    outputSummary: `Vendor ${p.reassign?.previousVendorName ?? 'previous vendor'} → ${vendor.name}; NTE $${target.nte} stays committed`,
+  });
+  assertTransition('approved', 'dispatched');
+  const email = buildDispatchEmail({
+    vendor,
+    site,
+    workOrder: target,
+    assetName: await assetName(target.assetId),
+  });
+  await WorkOrderModel.updateOne(
+    { _id: target._id, status: 'approved' },
+    { status: 'dispatched', vendorId: vendor._id, dispatchEmail: email, updatedAt: new Date() },
+  );
+  await logActivity({
+    step: 'dispatch',
+    actor: 'system',
+    proposalId: p._id,
+    workOrderId: target._id,
+    inputSummary: `Dispatch ${target.number} to ${vendor.name}`,
+    outputSummary: `Status dispatched. Email to ${vendor.email} drafted (not sent).`,
   });
   return {
     proposal: (await ProposalModel.findById(p._id).lean())!,

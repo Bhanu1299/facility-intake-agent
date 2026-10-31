@@ -280,14 +280,16 @@ describe('approval gate', () => {
 });
 
 describe('lifecycle state machine', () => {
-  it('only allows forward steps in order', () => {
+  it('only allows forward steps in order, plus dispatched -> approved after a decline', () => {
     expect(canTransition('proposed', 'approved')).toBe(true);
     expect(canTransition('approved', 'dispatched')).toBe(true);
     expect(canTransition('dispatched', 'accepted')).toBe(true);
     expect(canTransition('accepted', 'in_progress')).toBe(true);
     expect(canTransition('in_progress', 'completed')).toBe(true);
+    expect(canTransition('dispatched', 'approved')).toBe(true);
     expect(canTransition('proposed', 'dispatched')).toBe(false);
-    expect(canTransition('dispatched', 'approved')).toBe(false);
+    expect(canTransition('dispatched', 'proposed')).toBe(false);
+    expect(canTransition('accepted', 'approved')).toBe(false);
     expect(canTransition('completed', 'proposed')).toBe(false);
     expect(TRANSITIONS.completed).toEqual([]);
   });

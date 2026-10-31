@@ -39,6 +39,10 @@ export const WorkOrder = WorkOrderDraft.extend({
   /** Free-text notes, e.g. merged duplicate reports. */
   notes: z.array(z.string()),
   dispatchEmail: DispatchEmail.nullable(),
+  /** Vendor's confirmed arrival time (from the dispatch call), once accepted. */
+  eta: z.string().nullable().optional(),
+  /** Vendors who declined this work order on a call; never proposed again for it. */
+  declinedVendorIds: z.array(z.string()).optional(),
   /** Final invoiced cost once completed (moves from Committed to Spent). */
   actualCost: z.number().nonnegative().nullable(),
   createdAt: z.string(),

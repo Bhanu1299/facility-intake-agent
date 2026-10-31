@@ -20,6 +20,7 @@
     "express-rate-limit": "^8.7.2",
     "mongoose": "^9.11.4",
     "openai": "^7.45.1",
+    "twilio": "^6.2.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {

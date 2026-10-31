@@ -20,6 +20,19 @@ const EnvSchema = z.object({
   AUTONOMY_MODE: AutonomyMode.default('propose'),
   DEMO_RATE_LIMIT_PER_HOUR: z.coerce.number().int().positive().default(20),
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
+  // Vendor dispatch call (optional). Without these the app runs and the Call button never shows.
+  TWILIO_ACCOUNT_SID: z.string().default(''),
+  TWILIO_AUTH_TOKEN: z.string().default(''),
+  TWILIO_FROM_NUMBER: z.string().default(''),
+  /** The only number the app will ever dial (the author's own, verified on the Twilio trial). */
+  DEMO_VENDOR_PHONE: z.string().default(''),
+  CALL_ADMIN_KEY: z.string().default(''),
+  CALLS_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  /** Public base URL of this API (the Render URL); Twilio webhooks are built and signed on it. */
+  PUBLIC_API_URL: z.string().default(''),
 });
 export type Env = z.infer<typeof EnvSchema>;
 

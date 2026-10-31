@@ -1,10 +1,13 @@
 import { Schema, model } from 'mongoose';
 import {
   ActivityStep,
+  PROPOSAL_ACTIONS,
   PROPOSAL_STATUSES,
   type BudgetCheck,
   type DuplicateInfo,
+  type ProposalAction,
   type ProposalStatus,
+  type ReassignInfo,
   type SafetyRuleHit,
   type SignalInput,
   type TokenUsage,
@@ -56,13 +59,14 @@ export interface ProposalDoc {
   reference: string | null;
   inputText: string;
   status: ProposalStatus;
-  action: 'create' | 'merge';
+  action: ProposalAction;
   draft: WorkOrderDraft;
   urgencyReason: string;
   safetyRule: SafetyRuleHit | null;
   vendors: VendorRecommendation[];
   budget: BudgetCheck;
   duplicate: DuplicateInfo | null;
+  reassign?: ReassignInfo | null;
   repeatIssueNote: string | null;
   trendNote: string | null;
   needsHuman: boolean;
@@ -89,13 +93,14 @@ const ProposalSchema = new Schema<ProposalDoc>(
     reference: { type: String, default: null },
     inputText: { type: String, required: true },
     status: { type: String, enum: PROPOSAL_STATUSES, required: true },
-    action: { type: String, enum: ['create', 'merge'], required: true },
+    action: { type: String, enum: PROPOSAL_ACTIONS, required: true },
     draft: { type: Mixed, required: true },
     urgencyReason: { type: String, default: '' },
     safetyRule: { type: Mixed, default: null },
     vendors: { type: Mixed, default: () => [] },
     budget: { type: Mixed, required: true },
     duplicate: { type: Mixed, default: null },
+    reassign: { type: Mixed, default: null },
     repeatIssueNote: { type: String, default: null },
     trendNote: { type: String, default: null },
     needsHuman: { type: Boolean, required: true },

@@ -35,3 +35,19 @@ services:
         sync: false
       - key: CORS_ORIGIN
         sync: false
+      # Vendor dispatch call (optional). Set in the dashboard; CALLS_ENABLED stays out of the
+      # Blueprint so a sync never flips it back.
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_FROM_NUMBER
+        sync: false
+      - key: DEMO_VENDOR_PHONE
+        sync: false
+      - key: CALL_ADMIN_KEY
+        sync: false
+      - key: CALLS_ENABLED
+        sync: false
+      - key: PUBLIC_API_URL
+        sync: false

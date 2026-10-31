@@ -1,13 +1,14 @@
 import type { WorkOrderStatus } from '@fia/shared';
 
 /**
- * Work order lifecycle. Must-ship: proposed -> approved -> dispatched.
- * accepted / in_progress / completed exist in the model for the stretch vendor view.
+ * Work order lifecycle. Must-ship: proposed -> approved -> dispatched -> accepted (vendor confirms
+ * on the dispatch call). A vendor who declines sends it back to approved until the manager
+ * approves the next vendor. in_progress / completed are for the stretch vendor view.
  */
 export const TRANSITIONS: Record<WorkOrderStatus, WorkOrderStatus[]> = {
   proposed: ['approved'],
   approved: ['dispatched'],
-  dispatched: ['accepted'],
+  dispatched: ['accepted', 'approved'],
   accepted: ['in_progress'],
   in_progress: ['completed'],
   completed: [],

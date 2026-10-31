@@ -9,6 +9,7 @@ import {
   SiteModel,
   VendorModel,
 } from '../models/catalog';
+import { KEEP_ON_RESET } from '../models/call';
 import { CounterModel, WorkOrderModel } from '../models/workOrder';
 import { SettingsModel } from '../models/settings';
 import { generateSeedData } from './generate';
@@ -35,7 +36,8 @@ const load = (model: Pick<Model<unknown>, 'collection'>, docs: readonly object[]
   model.collection.insertMany(docs as unknown as Document[], { ordered: false });
 
 /**
- * Empties every collection (including proposals, signals and the activity log) and reloads the
+ * Empties every collection (including proposals, signals and the activity log; not vendor call
+ * records, see KEEP_ON_RESET) and reloads the
  * demo dataset anchored to `now`. Every collection is small (sensor readings are bucketed per
  * asset per day), so collections are emptied in place and keep their indexes, and all of them
  * load in parallel.
@@ -50,7 +52,9 @@ export async function resetDemoData(
   await Promise.all(Object.values(mongoose.models).map((m) => m.init()));
 
   await Promise.all([
-    ...Object.values(mongoose.connection.collections).map((c) => c.deleteMany({})),
+    ...Object.values(mongoose.connection.collections)
+      .filter((c) => !KEEP_ON_RESET.includes(c.collectionName))
+      .map((c) => c.deleteMany({})),
     mongoose.connection.db!.dropCollection(LEGACY_READINGS_COLLECTION).catch(() => undefined),
   ]);
   const wiped = Date.now();

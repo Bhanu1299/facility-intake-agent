@@ -26,6 +26,9 @@ export interface WorkOrderDoc {
   proposalId: string | null;
   notes: string[];
   dispatchEmail: DispatchEmail | null;
+  /** Confirmed arrival time from the dispatch call. Optional: seeded rows don't set it. */
+  eta?: Date | null;
+  declinedVendorIds?: string[];
   actualCost: number | null;
   createdAt: Date;
   updatedAt: Date;
@@ -63,6 +66,8 @@ const WorkOrderSchema = new Schema<WorkOrderDoc>(
       ),
       default: null,
     },
+    eta: { type: Date, default: null },
+    declinedVendorIds: { type: [String], default: [] },
     actualCost: { type: Number, default: null },
     createdAt: { type: Date, required: true },
     updatedAt: { type: Date, required: true },

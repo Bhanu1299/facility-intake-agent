@@ -10,6 +10,8 @@ export interface LlmRequest<T> {
   schemaName: string;
   schema: z.ZodType<T>;
   reasoningEffort?: 'low' | 'medium' | 'high';
+  /** Cap on completion tokens (reasoning included). */
+  maxTokens?: number;
 }
 
 export interface LlmResult<T> {
@@ -70,6 +72,8 @@ export interface GroqClientOptions {
   apiKey: string;
   baseURL: string;
   maxRetries?: number;
+  /** Per-request timeout. */
+  timeoutMs?: number;
 }
 
 /** OpenAI-compatible client (Groq by default). Structured outputs, no streaming, no tools. */
@@ -83,7 +87,7 @@ export class OpenAiCompatibleClient implements LlmClient {
       apiKey: opts.apiKey,
       baseURL: opts.baseURL,
       maxRetries: 0,
-      timeout: 60_000,
+      timeout: opts.timeoutMs ?? 60_000,
     });
     this.maxRetries = opts.maxRetries ?? 5;
   }
@@ -109,6 +113,7 @@ export class OpenAiCompatibleClient implements LlmClient {
             },
           },
           ...(req.reasoningEffort ? { reasoning_effort: req.reasoningEffort } : {}),
+          ...(req.maxTokens ? { max_completion_tokens: req.maxTokens } : {}),
           include_reasoning: false,
         };
         const completion = await this.client.chat.completions.create(

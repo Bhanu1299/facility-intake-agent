@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ProposalStatus, URGENCY_RANK } from './enums';
+import { ProposalAction, ProposalStatus, URGENCY_RANK } from './enums';
 import { WorkOrderDraft } from './workOrder';
 
 export const VendorRecommendation = z.object({
@@ -39,6 +39,17 @@ export const DuplicateInfo = z.object({
 });
 export type DuplicateInfo = z.infer<typeof DuplicateInfo>;
 
+export const ReassignInfo = z.object({
+  workOrderId: z.string(),
+  workOrderNumber: z.string(),
+  previousVendorId: z.string(),
+  previousVendorName: z.string(),
+  /** What the vendor said on the call. */
+  reason: z.string(),
+  callId: z.string(),
+});
+export type ReassignInfo = z.infer<typeof ReassignInfo>;
+
 export const TokenUsage = z.object({
   promptTokens: z.number().int().nonnegative(),
   completionTokens: z.number().int().nonnegative(),
@@ -62,14 +73,15 @@ export const Proposal = z.object({
   /** What came in: the request text, or the sensor reading in words. */
   inputText: z.string(),
   status: ProposalStatus,
-  /** `merge` = attach this report to an existing open work order instead of creating one. */
-  action: z.enum(['create', 'merge']),
+  action: ProposalAction,
   draft: WorkOrderDraft,
   urgencyReason: z.string(),
   safetyRule: SafetyRuleHit.nullable(),
   vendors: z.array(VendorRecommendation).max(3),
   budget: BudgetCheck,
   duplicate: DuplicateInfo.nullable(),
+  /** Set on `reassign` proposals. Older proposals may not have the field. */
+  reassign: ReassignInfo.nullable().optional(),
   repeatIssueNote: z.string().nullable(),
   /** Sensor signals only: "at this rate it crosses the threshold in about N days." */
   trendNote: z.string().nullable(),
