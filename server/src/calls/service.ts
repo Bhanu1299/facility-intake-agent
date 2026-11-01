@@ -174,7 +174,9 @@ export class CallService {
     });
     if (active) throw new CallError('A call for this work order is already in progress', 409);
     const hourAgo = new Date(now.getTime() - 3600_000);
-    if ((await CallModel.countDocuments({ createdAt: { $gt: hourAgo } })) >= MAX_CALLS_PER_HOUR) {
+    // Placements Twilio refused never rang, so they don't count toward the limit.
+    const recent = { createdAt: { $gt: hourAgo }, endedReason: { $ne: 'failed' } };
+    if ((await CallModel.countDocuments(recent)) >= MAX_CALLS_PER_HOUR) {
       throw new CallError(`Call limit reached (${MAX_CALLS_PER_HOUR} per hour). Try later.`, 429);
     }
     const [vendor, site] = await Promise.all([
@@ -198,7 +200,7 @@ export class CallService {
       updatedAt: now,
     });
     // Two concurrent starts can both pass the count above; re-count with ours included.
-    if ((await CallModel.countDocuments({ createdAt: { $gt: hourAgo } })) > MAX_CALLS_PER_HOUR) {
+    if ((await CallModel.countDocuments(recent)) > MAX_CALLS_PER_HOUR) {
       await CallModel.deleteOne({ _id: id });
       throw new CallError(`Call limit reached (${MAX_CALLS_PER_HOUR} per hour). Try later.`, 429);
     }
@@ -305,7 +307,20 @@ export class CallService {
     if (res.modifiedCount === 0) {
       return (await CallModel.findById(callId).lean())?.responses['0'] ?? hangupTwiml();
     }
+    // Twilio's timeLimit is the main cap, but a trial account may have refused it.
+    setTimeout(() => {
+      void this.enforceTimeLimit(callId);
+    }, CALL_TIME_LIMIT_SEC * 1000).unref();
     return xml;
+  }
+
+  /** Hangs up a call still open CALL_TIME_LIMIT_SEC after it was answered. */
+  async enforceTimeLimit(callId: string): Promise<void> {
+    const call = await CallModel.findById(callId).lean();
+    if (!call || call.endedAt || !call.callSid || !this.deps.provider) return;
+    await this.deps.provider.hangup(call.callSid).catch((err: unknown) => {
+      console.error('[calls] time-limit hangup failed', err);
+    });
   }
 
   /** Gather / redirect webhook for sequence n. Replays the stored reply if Twilio retries. */
@@ -384,6 +399,15 @@ export class CallService {
       outcome,
       reason,
     });
+
+    const answeredAt = call.transcript[0]?.at;
+    if (answeredAt && now.getTime() - answeredAt.getTime() >= CALL_TIME_LIMIT_SEC * 1000) {
+      return goodbye(
+        ["We're out of time, so the manager will follow up by email. Goodbye."],
+        'email_fallback',
+        'Call time limit reached',
+      );
+    }
 
     if (!speech) {
       if (call.noSpeechCount === 0) {

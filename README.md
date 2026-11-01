@@ -199,7 +199,8 @@ from a shared Twilio trial number. The seeded vendor phone numbers are fake and 
 one function picks the number and a test checks it. Calls need `CALLS_ENABLED=true` on the server
 _and_ the admin key (entered under Settings, kept in session storage). Visitors without the key
 see the most recent stored call, labeled "Recorded demo call". The server allows at most 3 calls
-an hour, Twilio cuts each call at 180 seconds, and every Twilio webhook must carry a valid
+an hour (placements Twilio refuses don't count), each call is cut at 180 seconds (Twilio's
+`timeLimit`, and the server hangs up itself if a trial account refuses that parameter), and every Twilio webhook must carry a valid
 `X-Twilio-Signature` (403 otherwise). Only the agent's own turn-by-turn transcript is stored. Calls
 are not recorded.
 

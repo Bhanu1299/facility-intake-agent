@@ -11,7 +11,8 @@ import { WorkOrderModel } from '../models/workOrder';
 import { resetDemoData } from '../seed/reset';
 import { useTestDb } from '../test/db';
 import { dialTarget, DialError, spokenDigits } from './dial';
-import { placeDemoCall, type CallProvider } from './provider';
+import { placeDemoCall, TwilioCallProvider, type CallProvider } from './provider';
+import type { CallService } from './service';
 import { matchStopPhrase } from './turn';
 
 const PUBLIC = 'https://api.example.test';
@@ -40,6 +41,10 @@ class FakeProvider implements CallProvider {
   async create(p: Parameters<CallProvider['create']>[0]): Promise<{ sid: string }> {
     this.created.push(p);
     return { sid: `CA${String(++this.n).padStart(32, '0')}` };
+  }
+  readonly hungUp: string[] = [];
+  async hangup(sid: string): Promise<void> {
+    this.hungUp.push(sid);
   }
 }
 
@@ -203,6 +208,61 @@ describe('vendor dispatch call', () => {
         .set('X-Admin-Key', ADMIN)
         .expect(429);
       expect(provider.created).toHaveLength(3);
+    });
+
+    it('placements Twilio refuses never count toward the hourly limit', async () => {
+      const refusing = new FakeProvider();
+      refusing.create = async () => {
+        throw new Error('Invalid or disallowed parameters provided');
+      };
+      const app = createApp(callEnv(), {
+        callProvider: refusing,
+        callLlm: new ScriptedLlm([]),
+        now,
+      });
+      for (let i = 0; i < 4; i++) {
+        await request(app)
+          .post(`/api/work-orders/${woId}/call`)
+          .set('X-Admin-Key', ADMIN)
+          .expect(502);
+      }
+      expect(await CallModel.countDocuments({ endedReason: 'failed' })).toBe(4);
+      await startCall(makeApp());
+      expect(provider.created).toHaveLength(1);
+    });
+
+    it('TwilioCallProvider retries with the basic parameters when a trial account refuses the rest', async () => {
+      const twilioProvider = new TwilioCallProvider('AC' + '0'.repeat(32), TOKEN);
+      const sent: Record<string, unknown>[] = [];
+      (twilioProvider as unknown as { client: unknown }).client = {
+        calls: {
+          create: async (params: Record<string, unknown>) => {
+            sent.push(params);
+            if ('timeLimit' in params) {
+              throw new Error(
+                'Invalid or disallowed parameters provided - trial accounts have limited parameter access',
+              );
+            }
+            return { sid: 'CA1' };
+          },
+        },
+      };
+      const res = await placeDemoCall(twilioProvider, callEnv(), {
+        answerUrl: 'https://x/answer',
+        statusCallbackUrl: 'https://x/status',
+        timeLimit: 180,
+        ringTimeout: 25,
+      });
+      expect(res.sid).toBe('CA1');
+      expect(sent).toHaveLength(2);
+      expect(sent[1]).toEqual({
+        to: DEMO_PHONE,
+        from: callEnv().TWILIO_FROM_NUMBER,
+        url: 'https://x/answer',
+        method: 'POST',
+        statusCallback: 'https://x/status',
+        statusCallbackMethod: 'POST',
+      });
     });
 
     it('only calls dispatched work orders, one call at a time', async () => {
@@ -417,6 +477,33 @@ describe('vendor dispatch call', () => {
         actor: 'system',
       }))!;
       expect(log.outputSummary).toContain('Email fallback used');
+    });
+
+    it('enforces the 180 s limit itself: ends at the next turn and hangs up a call left open', async () => {
+      const app = makeApp(new ScriptedLlm([]));
+      const { id, sid } = await converse(app, []);
+      await CallModel.updateOne(
+        { _id: id },
+        { 'transcript.0.at': new Date(now().getTime() - 181_000) },
+      );
+      const res = await signed(app, `/api/twilio/voice/${id}/turn?n=1`, {
+        CallSid: sid,
+        SpeechResult: 'Hang on, let me check.',
+      }).expect(200);
+      expect(res.text).toContain('<Hangup/>');
+      const call = (await CallModel.findById(id).lean())!;
+      expect(call.outcome).toBe('email_fallback');
+      expect(call.reason).toBe('Call time limit reached');
+
+      // The timer path: a call still open (no endedAt) is hung up through the provider.
+      await (app.locals.calls as CallService).enforceTimeLimit(id);
+      expect(provider.hungUp).toEqual([sid]);
+      await signed(app, `/api/twilio/voice/${id}/status`, {
+        CallSid: sid,
+        CallStatus: 'completed',
+      });
+      await (app.locals.calls as CallService).enforceTimeLimit(id);
+      expect(provider.hungUp).toEqual([sid]);
     });
 
     it('stop phrases end the call before the model is asked', async () => {

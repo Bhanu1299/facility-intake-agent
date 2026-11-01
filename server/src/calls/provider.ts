@@ -16,6 +16,8 @@ export interface OutboundCall {
 /** Thin seam over Twilio's REST API so tests never place real calls. */
 export interface CallProvider {
   create(params: OutboundCall & { to: string; from: string }): Promise<{ sid: string }>;
+  /** Ends a live call (our own time limit, for when Twilio didn't take timeLimit). */
+  hangup(sid: string): Promise<void>;
 }
 
 /** Places the demo call. `to` always comes from dialTarget(); see dial.ts. */
@@ -39,17 +41,49 @@ export class TwilioCallProvider implements CallProvider {
   }
 
   async create(p: OutboundCall & { to: string; from: string }): Promise<{ sid: string }> {
-    const call = await this.client.calls.create({
+    const basic = {
       to: p.to,
       from: p.from,
       url: p.answerUrl,
       method: 'POST',
       statusCallback: p.statusCallbackUrl,
       statusCallbackMethod: 'POST',
-      statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
-      timeLimit: p.timeLimit,
-      timeout: p.ringTimeout,
-    });
-    return { sid: call.sid };
+    } as const;
+    try {
+      const call = await this.client.calls.create({
+        ...basic,
+        statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
+        timeLimit: p.timeLimit,
+        timeout: p.ringTimeout,
+      });
+      return { sid: call.sid };
+    } catch (err) {
+      // Some trial accounts reject optional parameters. Retry with the basics; CallService
+      // enforces the time limit itself, and only the final status callback arrives.
+      if (!isTrialParameterError(err)) throw withCode(err);
+      console.warn('[calls] Twilio refused optional call parameters; retrying with the basics');
+      try {
+        return { sid: (await this.client.calls.create(basic)).sid };
+      } catch (err2) {
+        throw withCode(err2);
+      }
+    }
   }
+
+  async hangup(sid: string): Promise<void> {
+    await this.client.calls(sid).update({ status: 'completed' });
+  }
+}
+
+export function isTrialParameterError(err: unknown): boolean {
+  return err instanceof Error && /trial accounts have limited parameter access/i.test(err.message);
+}
+
+/** Puts Twilio's error code in the message so the stored call reason says which error it was. */
+function withCode(err: unknown): unknown {
+  const code = (err as { code?: unknown } | null)?.code;
+  if (err instanceof Error && code !== undefined && !err.message.includes(String(code))) {
+    err.message = `${err.message} (Twilio error ${String(code)})`;
+  }
+  return err;
 }
