@@ -41,6 +41,9 @@ export const RING_TIMEOUT_SEC = 25;
 export const MAX_VENDOR_TURNS = 6;
 /** Quote calls ask more questions (estimate, arrival, read-back, limit). */
 export const MAX_QUOTE_TURNS = 9;
+/** Seconds of silence after the first question (answer webhook) before the Gather gives up. */
+export const FIRST_GATHER_TIMEOUT_SEC = 8;
+export const GATHER_TIMEOUT_SEC = 6;
 /** A call still open this long after it was created has lost its final status callback. */
 export const STALE_CALL_MS = (CALL_TIME_LIMIT_SEC + RING_TIMEOUT_SEC + 120) * 1000;
 /** One voice for every line. https://www.twilio.com/docs/voice/twiml/say/text-speech */
@@ -472,8 +475,10 @@ export class CallService {
         input: ['speech'],
         action: `${this.webhookBase(callId)}/turn?n=${n + 1}`,
         method: 'POST',
+        // Listening starts as soon as the question ends; "auto" ends the turn on a pause.
         speechTimeout: 'auto',
-        timeout: 6,
+        // People take a moment to answer the first question after picking up.
+        timeout: n === 0 ? FIRST_GATHER_TIMEOUT_SEC : GATHER_TIMEOUT_SEC,
         language: 'en-US',
         hints:
           'yes, no, today, tomorrow, morning, afternoon, a.m., p.m., stop, call back, dollars, hundred, call-out fee, hourly rate, an hour',

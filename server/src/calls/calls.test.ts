@@ -315,6 +315,12 @@ describe('vendor dispatch call', () => {
       expect(res.text).toContain('you can say stop anytime');
       expect(res.text).toContain('Is this Lakeshore Plumbing?');
       expect(res.text).toMatch(/<Gather[^>]*input="speech"/);
+      // First Gather: listens right after the question, 8 s to start talking, auto end-of-speech.
+      expect(res.text).toMatch(/<Gather[^>]*speechTimeout="auto"/);
+      expect(res.text).toMatch(/<Gather[^>]*timeout="8"/);
+      expect(res.text).toMatch(
+        /<Gather[^>]*>\s*<Say[^>]*>Is this Lakeshore Plumbing\?<\/Say>\s*<\/Gather>/,
+      );
       expect(res.text).toContain('voice="Google.en-US-Chirp3-HD-Aoede"');
     });
   });
@@ -333,6 +339,7 @@ describe('vendor dispatch call', () => {
         'Yes, that works.',
       ]);
       expect(twiml[1]).toContain("We've got a job at our Elmwood location");
+      expect(twiml[1]).toMatch(/<Gather[^>]*timeout="6"/);
       expect(twiml[1]).toContain('Our limit on this one is');
       expect(twiml[1]).toContain("what's the soonest you could get someone out there?");
       expect(twiml[2]).toContain("Okay, so you'd be there tomorrow at 9 AM, right?");
