@@ -523,6 +523,33 @@ describe('vendor dispatch call', () => {
       expect((await CallModel.findById(id).lean())!.outcome).toBe('email_fallback');
     });
 
+    it('never re-asks after a statement or closing line: silence ends the call', async () => {
+      const app = makeApp(new ScriptedLlm([{ say: 'Great, thanks.' }]));
+      const { id, sid } = await converse(app, ['Yes, this is Lakeshore.']);
+      // The last thing the agent said was a statement, not a question.
+      await CallModel.updateOne(
+        { _id: id },
+        { lastQuestion: 'Thanks, our manager will be in touch.' },
+      );
+      const res = await signed(app, `/api/twilio/voice/${id}/turn?n=2`, {
+        CallSid: sid,
+        SpeechResult: '',
+      }).expect(200);
+      expect(res.text).not.toContain("didn't catch");
+      expect(res.text).not.toContain('<Gather');
+      expect(res.text).toContain('<Hangup/>');
+      expect((await CallModel.findById(id).lean())!.outcome).toBe('email_fallback');
+    });
+
+    it('a model statement is never left hanging: the pending question follows it', async () => {
+      const llm = new ScriptedLlm([{ say: 'Great, thanks.' }, { say: 'Sounds good.' }]);
+      const app = makeApp(llm);
+      const { twiml } = await converse(app, ['Yes, this is Lakeshore.', 'Hmm, let me look.']);
+      const gather = /<Gather[^>]*>([\s\S]*?)<\/Gather>/.exec(twiml[2]!)![1]!;
+      expect(gather).toMatch(/\?<\/Say>$/);
+      expect(twiml[2]).toContain('Sounds good.');
+    });
+
     it('model timeout: says "one moment" and retries once with the same speech', async () => {
       const llm = new ScriptedLlm([
         new LlmError('LLM call failed: Request timed out.', true),

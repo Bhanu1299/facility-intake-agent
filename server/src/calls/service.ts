@@ -638,6 +638,14 @@ export class CallService {
     }
 
     if (!speech) {
+      // After a statement or closing line there is nothing to repeat: the call is over.
+      if (!isPrompt(call.lastQuestion, call.seq)) {
+        const quote =
+          call.purpose === 'quote' ? quoteFromState(call, (await this.jobFor(call)).job.nte) : null;
+        return quote
+          ? { ...goodbye([], 'quoted', null), quote }
+          : goodbye([], 'email_fallback', 'No speech from the vendor');
+      }
       if (call.noSpeechCount === 0) {
         return {
           says: ["Sorry, I didn't catch that."],
@@ -776,7 +784,7 @@ export class CallService {
             ...meta,
           };
         } else {
-          plan = { says: [], question: d.say, set: base, ...meta };
+          plan = { ...modelLine(d.say, call.lastQuestion), set: base, ...meta };
         }
         break;
       case 'decline_job':
@@ -898,6 +906,11 @@ export class CallService {
       set: { ...set, ...extra },
       ...meta,
     });
+    /** A model line goes in the Gather only if it is a question; else the pending one follows. */
+    const askModel = (say: string, extra: NonNullable<TurnPlan['set']> = {}): TurnPlan => ({
+      ...ask('', extra),
+      ...modelLine(say, call.lastQuestion),
+    });
     const readBack = (at: Date): TurnPlan =>
       ask(`Okay, so that's ${formatSpokenTime(at, now)}, right?`, {
         quoteStage: 'arrival',
@@ -961,7 +974,7 @@ export class CallService {
           set.estimate = call.estimate ?? normalizeEstimate({ quoteType: 'none' })!;
           plan = askArrival();
         } else {
-          plan = ask(d.say, { stageTries: call.stageTries + 1 });
+          plan = askModel(d.say, { stageTries: call.stageTries + 1 });
         }
         break;
       case 'arrival':
@@ -972,7 +985,7 @@ export class CallService {
         } else if (call.stageTries >= 1) {
           plan = afterArrival(null);
         } else {
-          plan = ask(d.say, { stageTries: call.stageTries + 1 });
+          plan = askModel(d.say, { stageTries: call.stageTries + 1 });
         }
         break;
       case 'limit': {
@@ -981,7 +994,7 @@ export class CallService {
           set.nteAnswer = answer;
           plan = finish();
         } else {
-          plan = ask(d.say, { stageTries: call.stageTries + 1 });
+          plan = askModel(d.say, { stageTries: call.stageTries + 1 });
         }
         break;
       }
@@ -1129,6 +1142,39 @@ export class CallService {
       throw err;
     }
   }
+}
+
+const isQuestion = (line: string): boolean => /\?["')\s]*$/.test(line);
+
+/** Lines the agent listens after that aren't phrased as questions. */
+const PROMPTS = new Set<string>();
+
+/**
+ * True when the agent's last line asked for an answer, so silence earns one re-ask. The answer
+ * webhook (sequence 0) always does.
+ */
+export function isPrompt(lastLine: string, seq: number): boolean {
+  return seq === 0 || isQuestion(lastLine) || PROMPTS.has(lastLine.trim());
+}
+
+/** The model's line: a question is asked as is; a statement is said, then the pending question. */
+function modelLine(say: string, pending: string): { says: string[]; question: string } {
+  if (isQuestion(say) || !pending) return { says: [], question: say };
+  return { says: [say], question: pending };
+}
+
+/** Quote result from what a quote call collected so far, or null if it collected nothing. */
+function quoteFromState(call: CallDoc, nte: number): QuoteResult | null {
+  if (!call.estimate && !call.arrivalConfirmed) return null;
+  return finalizeQuote({
+    estimate: call.estimate,
+    earliestArrival: call.arrivalConfirmed,
+    nte,
+    nteAsked: call.nteAsked,
+    nteAnswer: call.nteAnswer,
+    notes: call.quoteNotes,
+    confidences: call.transcript.map((t) => t.confidence).filter((c): c is number => c !== null),
+  });
 }
 
 function validArrival(at: Date | null, now: Date): Date | null {
