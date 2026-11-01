@@ -230,7 +230,7 @@ digit>. Say stop at any time to end the call."
 **Demo safety.** The app only ever dials `DEMO_VENDOR_PHONE`, the author's own number. The seeded
 vendor phone numbers are fake and are never dialed; one function picks the number and a test checks
 it. Starting calls needs `CALLS_ENABLED=true` on the server _and_ the admin key (entered under
-Settings, kept in session storage); automated follow-ups in a chain an admin started don't ask for
+Settings, kept in the browser's local storage until "Forget key"); automated follow-ups in a chain an admin started don't ask for
 the key again. Visitors without the key see the most recent stored call, labeled "Recorded demo
 call". The server allows at most 6 calls per work order and 12 an hour in total (placements Twilio
 refuses don't count). Each call is cut at 180 seconds (Twilio's `timeLimit`, plus a server-side
