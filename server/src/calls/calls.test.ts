@@ -15,6 +15,7 @@ import {
   ScriptedLlm,
   TOKEN,
   callEnv,
+  spoken,
 } from '../test/calls';
 import { useTestDb } from '../test/db';
 import { dialTarget, DialError, spokenDigits } from './dial';
@@ -307,12 +308,11 @@ describe('vendor dispatch call', () => {
       const res = await signed(app, `/api/twilio/voice/${id}/answer`, { CallSid: sid }).expect(200);
       expect(res.type).toBe('text/xml');
       expect(res.text).toContain(
-        'Hi there, this is an automated assistant calling for Harbor and Hearth Kitchen.',
+        'Hi, this is an automated assistant calling for Harbor and Hearth Kitchen.',
       );
-      expect(res.text).toContain(
-        'our number is 7 1 6, 5 5 5, 0 1 0 0, and you can say stop anytime.',
-      );
-      expect(res.text).toContain('you can say stop anytime');
+      // No callback digits and no "say stop" in the opener.
+      expect(res.text).not.toContain('7 1 6');
+      expect(res.text).not.toMatch(/say stop/i);
       expect(res.text).toContain('Is this Lakeshore Plumbing?');
       expect(res.text).toMatch(/<Gather[^>]*input="speech"/);
       // First Gather: listens right after the question, 8 s to start talking, auto end-of-speech.
@@ -338,12 +338,16 @@ describe('vendor dispatch call', () => {
         'Sure, I can be there tomorrow at 9.',
         'Yes, that works.',
       ]);
-      expect(twiml[1]).toContain("We've got a job at our Elmwood location");
+      expect(twiml[1]).toContain('at our Elmwood location');
+      expect(twiml[1]).toContain('Not urgent, sometime this week.');
       expect(twiml[1]).toMatch(/<Gather[^>]*timeout="6"/);
-      expect(twiml[1]).toContain('Our limit on this one is');
-      expect(twiml[1]).toContain("what's the soonest you could get someone out there?");
-      expect(twiml[2]).toContain("Okay, so you'd be there tomorrow at 9 AM, right?");
-      expect(twiml[3]).toContain("Perfect, you're all set for tomorrow at 9 AM.");
+      expect(spoken(twiml[1]!)).not.toMatch(/limit|budget|dollars/i);
+      expect(twiml[1]).toContain("Can you take it, and when's the earliest you could get there?");
+      // "tomorrow" is relative: read back with the date and a question.
+      expect(twiml[2]).toContain('Thursday the 5th at 9 AM. Is that right?');
+      expect(twiml[3]).toContain('Perfect, Thursday at 9 AM.');
+      expect(twiml[3]).toContain('The address is 812 Elmwood Ave.');
+      expect(twiml[3]).not.toMatch(/work order|\d \d \d/i);
       expect(twiml[3]).toContain('<Hangup/>');
 
       const wo = (await WorkOrderModel.findById(woId).lean())!;
@@ -383,7 +387,7 @@ describe('vendor dispatch call', () => {
       ]);
       const app = makeApp(llm);
       const { id, twiml } = await converse(app, ['Yes.', 'I can come today at 2 pm.']);
-      expect(twiml[2]).toContain("Okay, so you'd be there today at 2 PM, right?");
+      expect(twiml[2]).toContain('Today at 2 PM. Is that right?');
       expect((await CallModel.findById(id).lean())!.outcome).toBeNull();
       expect((await WorkOrderModel.findById(woId).lean())!.status).toBe('dispatched');
     });
@@ -569,7 +573,7 @@ describe('vendor dispatch call', () => {
       const retry = await signed(app, `/api/twilio/voice/${id}/turn?n=2&retry=1`, {
         CallSid: sid,
       }).expect(200);
-      expect(retry.text).toContain("We've got a job at our");
+      expect(retry.text).toContain('at our Elmwood location');
       expect(llm.calls.map((c) => c.user.includes('Yes, this is Lakeshore.'))).toEqual([
         true,
         true,

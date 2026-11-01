@@ -303,8 +303,18 @@ const ordinalSuffix = (n: number): string => {
 const weekdayName = (date: Date, tz: string): string =>
   date.toLocaleDateString('en-US', { weekday: 'long', timeZone: tz });
 
-/** Read-back with the date, so there's no doubt which day: "Tuesday the 3rd at 11 AM". */
-export function spokenDayDate(date: Date, tz = SITE_TIME_ZONE): string {
+/**
+ * Read-back with the date, so there's no doubt which day: "Tuesday the 3rd at 11 AM". With `now`,
+ * a time later today reads "today at 2 PM".
+ */
+export function spokenDayDate(date: Date, tz = SITE_TIME_ZONE, now?: Date): string {
+  if (now) {
+    const p = localParts(date, tz);
+    const t = localParts(now, tz);
+    if (p.year === t.year && p.month === t.month && p.day === t.day) {
+      return `today at ${spokenClock(date, tz)}`;
+    }
+  }
   return `${weekdayName(date, tz)} the ${ordinalSuffix(localParts(date, tz).day)} at ${spokenClock(date, tz)}`;
 }
 

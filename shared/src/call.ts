@@ -57,6 +57,10 @@ export const CallTurnDecision = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/)
     .nullable(),
   reason: z.string().trim().max(300).nullable(),
+  /** The vendor's question, when their reply mainly asks something. */
+  vendorQuestion: z.string().trim().max(300).nullable(),
+  /** Answer from the job details only; null when the details don't say. */
+  answer: z.string().trim().max(240).nullable(),
 });
 export type CallTurnDecision = z.infer<typeof CallTurnDecision>;
 
@@ -115,6 +119,8 @@ export const QuoteTurnDecision = z.object({
   /** Caveats worth keeping, e.g. "needs to see it before a firm price". */
   notes: z.string().trim().max(200).nullable(),
   reason: z.string().trim().max(300).nullable(),
+  vendorQuestion: z.string().trim().max(300).nullable(),
+  answer: z.string().trim().max(240).nullable(),
 });
 export type QuoteTurnDecision = z.infer<typeof QuoteTurnDecision>;
 

@@ -4,6 +4,7 @@ import type {
   CallAction,
   CallOutcome,
   CallPurpose,
+  CallTurnDecision,
   QuoteResult,
   QuoteTurnDecision,
   Urgency,
@@ -15,22 +16,46 @@ import { newId } from '../ids';
 import type { LlmClient } from '../llm/client';
 import { CallModel, type CallDoc } from '../models/call';
 import { SiteModel, VendorModel } from '../models/catalog';
+import { ProposalModel } from '../models/pipeline';
 import { SettingsModel } from '../models/settings';
 import { WorkOrderModel } from '../models/workOrder';
 import { SITE_TIME_ZONE, URGENCY_WINDOW_HOURS } from '../pipeline/plan';
-import { COMPANY_NAME } from '../seed/data';
 import { proposeNextVendor } from '../workflow/reassign';
-import { DialError, spokenDigits } from './dial';
+import { DialError } from './dial';
 import { placeDemoCall, type CallProvider } from './provider';
-import { formatSpokenTime, localIsoToUtc, parseSpokenArrival } from './time';
 import {
-  decideQuoteTurn,
-  finalizeQuote,
-  isPlainYes,
-  normalizeEstimate,
-  overNte,
-  spokenEstimate,
-} from './quote';
+  ARRIVAL_QUESTION,
+  BOOK_ASK_NO_TIME,
+  BOOK_QUESTION,
+  ESTIMATE_NUDGE,
+  ESTIMATE_QUESTION,
+  LISTEN_LINES,
+  MAX_SENTENCE_WORDS,
+  NO_DETAIL,
+  QUOTE_CLOSE,
+  SPOKEN_COMPANY,
+  TIMING,
+  bookedClose,
+  bookingOpener,
+  budgetQuestion,
+  doesNotRecall,
+  gotIt,
+  isThatRight,
+  jobSentence,
+  opener,
+  problemShort,
+  stillWorks,
+  whenWeCalled,
+  wordCount,
+} from './script';
+import {
+  localIsoToUtc,
+  parseArrival,
+  spokenDayDate,
+  spokenWeekdayTime,
+  type SpokenArrival,
+} from './time';
+import { decideQuoteTurn, finalizeQuote, isPlainYes, normalizeEstimate, overNte } from './quote';
 import { decideTurn, matchStopPhrase, type CallJob, type ModelTurn, type TurnModels } from './turn';
 
 export const MAX_CALLS_PER_HOUR = 12;
@@ -71,66 +96,21 @@ export interface PlaceCallInput {
   bookingQuote?: QuoteResult | null;
 }
 
-/** Company name as spoken ("Harbor and Hearth Kitchen"). */
-const SPOKEN_COMPANY = COMPANY_NAME.replace(/&/g, 'and');
-
-/** How a person would say the urgency, followed by the window ("within 5 days"). */
-const URGENCY_PHRASE: Record<Urgency, string> = {
-  emergency: "It's an emergency, so we'd need someone",
-  urgent: "It's pretty urgent, so we'd need someone",
-  routine: 'Nothing urgent, anytime',
-  low: 'No rush at all, anytime',
-};
-
 function windowText(urgency: Urgency): string {
   const h = URGENCY_WINDOW_HOURS[urgency];
   return h < 48 ? `within ${h} hours` : `within ${h / 24} days`;
 }
-
-/** "WO-1234" -> "1 2 3 4" so it is read digit by digit. */
-const spokenWorkOrder = (number: string): string => number.replace(/\D/g, '').split('').join(' ');
-
-const firstWords = (s: string, n: number): string => s.split(/\s+/).slice(0, n).join(' ');
 
 const sameMinute = (a: Date, b: Date): boolean =>
   Math.floor(a.getTime() / 60_000) === Math.floor(b.getTime() / 60_000);
 
 const DAY_MS = 86_400_000;
 
-/** Lines spoken before the first question: the required disclosure, always first. */
-export function openingLines(env: Pick<Env, 'TWILIO_FROM_NUMBER'>): string[] {
-  return [
-    `Hi there, this is an automated assistant calling for ${SPOKEN_COMPANY}.`,
-    `If you need to reach us, our number is ${spokenDigits(env.TWILIO_FROM_NUMBER)}, and you can say stop anytime.`,
-  ];
-}
+const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 
-export function briefLines(job: CallJob, shortSite: string): string[] {
-  return [
-    `We've got a job at our ${shortSite} location, ${job.siteAddress}. ${firstWords(job.title, 10)}.`,
-    `${URGENCY_PHRASE[job.urgency]} ${job.window}. Our limit on this one is ${job.nte} dollars.`,
-  ];
-}
-
-export const BRIEF_QUESTION =
-  "Could you take it, and what's the soonest you could get someone out there?";
-
-/** Quote calls describe the job without the NTE; the limit only comes up if the price is over. */
-export function quoteBriefLines(job: CallJob, shortSite: string): string[] {
-  return [
-    `We're looking for a quote on a job at our ${shortSite} location, ${job.siteAddress}. ${firstWords(job.title, 10)}.`,
-    `${URGENCY_PHRASE[job.urgency]} ${job.window}.`,
-  ];
-}
-
-export const ESTIMATE_QUESTION =
-  "Roughly what would that run? A ballpark's fine, or just your call-out fee and hourly rate.";
-export const ARRIVAL_QUESTION = "Okay. And what's the soonest you could get someone out there?";
-export const QUOTE_CLOSE =
-  'Perfect, thanks so much. Our manager will confirm shortly by phone or email. Have a good one!';
-
-const shortAck = (say: string): string =>
-  say.trim().split(/\s+/).length <= 8 ? say : 'Got it, thanks.';
+/** A model line is used only if it is short; otherwise the fixed line takes its place. */
+const shortLine = (say: string): string | null =>
+  say.split(/(?<=[.!?])\s+/).every((x) => wordCount(x) <= MAX_SENTENCE_WORDS) ? say : null;
 
 interface TurnPlan {
   says: string[];
@@ -166,6 +146,8 @@ interface TurnPlan {
   >;
   model?: string | null;
   latencyMs?: number | null;
+  /** A vendor question the agent couldn't answer, for the Activity Log. */
+  vendorAsked?: string | null;
   action?: CallAction | QuoteTurnDecision['action'] | null;
 }
 
@@ -495,14 +477,39 @@ export class CallService {
     return r.toString();
   }
 
-  /** Answer webhook (sequence 0): disclosure, then "Am I speaking with <vendor>?". */
+  /**
+   * Opening line: "Hi, this is an automated assistant calling for ... Is this <vendor>?". Booking
+   * a quote winner instead reminds them of the quote call and waits for an acknowledgement.
+   */
+  private async openingPlan(call: CallDoc): Promise<TurnPlan> {
+    if (call.purpose === 'book' && call.bookingQuote) {
+      const [quoteCall, job] = await Promise.all([
+        CallModel.findOne({
+          workOrderId: call.workOrderId,
+          vendorId: call.vendorId,
+          purpose: 'quote',
+          outcome: 'quoted',
+        })
+          .sort({ createdAt: -1 })
+          .lean(),
+        this.jobFor(call),
+      ]);
+      return bookingOpener(
+        whenWeCalled(quoteCall?.createdAt ?? null, this.now()),
+        problemShort(job.job.title),
+        job.shortSite,
+      );
+    }
+    return opener(call.vendorName);
+  }
+
+  /** Answer webhook (sequence 0): the disclosure, then the first question. */
   async answer(callId: string, body: WebhookBody): Promise<string> {
     const call = await CallModel.findById(callId).lean();
     if (!call || !sidMatches(call, body)) return hangupTwiml();
     if (call.responses['0']) return call.responses['0'];
-    // People say "Lakeshore Plumbing", not "Lakeshore Plumbing Co.".
-    const question = `Is this ${call.vendorName.replace(/,?\s+(Co|Inc|LLC)\.?$/i, '')}?`;
-    const plan: TurnPlan = { says: openingLines(this.env), question };
+    const plan = await this.openingPlan(call);
+    const question = plan.question!;
     const xml = this.render(callId, 0, plan);
     const now = this.now();
     const res = await CallModel.updateOne(
@@ -609,6 +616,17 @@ export class CallService {
     if (res.modifiedCount === 0) {
       // Lost a race with a retry of the same webhook: reply the way the winner did.
       return (await CallModel.findById(callId).lean())?.responses[String(n)] ?? hangupTwiml();
+    }
+    if (plan.vendorAsked) {
+      await logActivity({
+        step: 'call',
+        actor: 'system',
+        workOrderId: call.workOrderId,
+        inputSummary: `Call to ${call.vendorName} about ${call.workOrderNumber}`,
+        outputSummary: `Vendor asked: ${plan.vendorAsked}`.slice(0, 300),
+      }).catch((err: unknown) => {
+        console.error('[calls] logging a vendor question failed', err);
+      });
     }
     if (plan.outcome) {
       await this.applyOutcome(callId).catch((err: unknown) => {
@@ -723,18 +741,30 @@ export class CallService {
     } catch (err) {
       return modelDown(err);
     }
+    return this.planBook(call, speech, turn, job, now, goodbye);
+  }
 
+  /**
+   * Booking call. Book mode: opener, job sentence, "Can you take it, and when's the earliest you
+   * could get there?". Booking a quote winner: "We called you <day> about ...", then "Does <time>
+   * still work?". A clear day and time (or a yes to the read-back) books it.
+   */
+  private planBook(
+    call: CallDoc,
+    speech: string,
+    turn: ModelTurn<CallTurnDecision>,
+    job: { job: CallJob; shortSite: string },
+    now: Date,
+    goodbye: (says: string[], outcome: CallOutcome, reason: string | null) => TurnPlan,
+  ): TurnPlan {
     const d = turn.decision;
-    const meta = {
-      model: turn.model,
-      latencyMs: turn.latencyMs,
-      action: d.action,
-    };
+    const meta = { model: turn.model, latencyMs: turn.latencyMs, action: d.action };
     const vendorTurns = call.vendorTurns + 1;
     const base = { vendorTurns, pendingSpeech: null };
-    const spoken = validArrival(parseSpokenArrival(speech, now), now);
-    const arrival =
-      spoken ?? validArrival(d.arrivalTime ? localIsoToUtc(d.arrivalTime) : null, now);
+    const fromQuote = Boolean(call.bookingQuote);
+    const heard = heardArrival(speech, d.arrivalTime, now);
+    const spoken = heard.spoken?.at ?? null;
+    const arrival = heard.arrival;
     // A yes to the read-back confirms it even if the model echoed the time back differently.
     const pending = call.pendingArrival;
     const confirmsPending =
@@ -742,56 +772,28 @@ export class CallService {
       pending !== null &&
       (d.action === 'confirm_job' || (d.action === 'continue' && isPlainYes(speech))) &&
       !(spoken && !sameMinute(spoken, pending));
-    const readBack = (at: Date): TurnPlan => ({
-      says: [],
-      question: `Okay, so you'd be there ${formatSpokenTime(at, now)}, right?`,
-      set: { ...base, pendingArrival: at },
+    const book = (at: Date, when: string): TurnPlan => ({
+      ...goodbye(bookedClose(when, job.job.street), 'confirmed', null),
+      eta: at,
+      set: base,
       ...meta,
     });
+    const ask = (says: string[], question: string, extra: NonNullable<TurnPlan['set']> = {}) => ({
+      says,
+      question,
+      set: { ...base, ...extra },
+      ...meta,
+    });
+    const onArrival = (a: SpokenArrival): TurnPlan =>
+      a.relative
+        ? ask([], isThatRight(cap(spokenDayDate(a.at, undefined, now))), {
+            pendingArrival: a.at,
+            briefRead: true,
+          })
+        : book(a.at, spokenDayDate(a.at, undefined, now));
 
     let plan: TurnPlan;
-    switch (confirmsPending ? 'confirm_job' : d.action) {
-      case 'confirm_job': {
-        if (pending && (confirmsPending || !arrival || sameMinute(arrival, pending))) {
-          plan = {
-            ...goodbye(
-              [
-                `Perfect, you're all set for ${formatSpokenTime(pending, now)}.`,
-                `Your reference is work order ${spokenWorkOrder(call.workOrderNumber)}. Thanks so much, bye now.`,
-              ],
-              'confirmed',
-              null,
-            ),
-            eta: pending,
-            set: base,
-            ...meta,
-          };
-        } else if (arrival) {
-          // The model can't confirm a time the vendor hasn't heard read back.
-          plan = readBack(arrival);
-        } else {
-          plan = {
-            says: [],
-            question: "And what's the soonest you could get there?",
-            set: base,
-            ...meta,
-          };
-        }
-        break;
-      }
-      case 'continue':
-        if (arrival && !(call.pendingArrival && sameMinute(arrival, call.pendingArrival))) {
-          plan = readBack(arrival);
-        } else if (!call.briefRead) {
-          plan = {
-            ...this.bookBrief(call, job, d.say, now),
-            set: { ...base, briefRead: true },
-            ...meta,
-          };
-        } else {
-          plan = { ...modelLine(d.say, call.lastQuestion), set: base, ...meta };
-        }
-        break;
+    switch (d.action) {
       case 'decline_job':
         plan = {
           ...goodbye([d.say], 'declined', d.reason ?? speech.slice(0, 200)),
@@ -802,7 +804,7 @@ export class CallService {
       case 'request_callback':
         plan = {
           ...goodbye([d.say], 'callback_requested', d.reason ?? speech.slice(0, 200)),
-          callbackAt: arrival,
+          callbackAt: arrival?.at ?? null,
           set: base,
           ...meta,
         };
@@ -810,6 +812,39 @@ export class CallService {
       case 'end':
         plan = { ...goodbye([d.say], 'ended', d.reason), set: base, ...meta };
         break;
+      default:
+        if (confirmsPending) {
+          plan = book(pending, spokenWeekdayTime(pending, now));
+        } else if (call.briefRead && arrival && !(pending && sameMinute(arrival.at, pending))) {
+          plan = onArrival(arrival);
+        } else if (!call.briefRead) {
+          // First reply: they confirmed who they are, or acknowledged the quote-call reminder.
+          const restate = jobSentence(job.job.requestText, job.job.title, job.shortSite);
+          if (fromQuote) {
+            const question = pending
+              ? stillWorks(spokenWeekdayTime(pending, now))
+              : BOOK_ASK_NO_TIME;
+            plan = ask(doesNotRecall(speech) ? [restate] : [], question, { briefRead: true });
+          } else {
+            plan = ask(['Great.', restate, TIMING[job.job.urgency]], BOOK_QUESTION, {
+              briefRead: true,
+            });
+          }
+        } else if (d.vendorQuestion) {
+          plan = this.answerVendor(call, d, base, meta);
+        } else if (fromQuote && doesNotRecall(speech)) {
+          plan = ask(
+            [jobSentence(job.job.requestText, job.job.title, job.shortSite)],
+            call.lastQuestion,
+          );
+        } else if (d.action === 'confirm_job') {
+          plan = ask([], ARRIVAL_QUESTION);
+        } else {
+          const line = shortLine(d.say);
+          plan = line
+            ? { ...modelLine(line, call.lastQuestion), set: base, ...meta }
+            : ask([], call.lastQuestion);
+        }
     }
 
     if (!plan.hangup && vendorTurns >= MAX_VENDOR_TURNS) {
@@ -827,29 +862,30 @@ export class CallService {
     return plan;
   }
 
-  /** Booking call brief. A quote winner hears their quote and arrival time back. */
-  private bookBrief(
+  /**
+   * The vendor asked something: answer from the job details if they say it, else "I don't have
+   * that detail", then repeat the pending question. Unanswered questions go to the Activity Log.
+   */
+  private answerVendor(
     call: CallDoc,
-    job: { job: CallJob; shortSite: string },
-    ack: string,
-    now: Date,
-  ): { says: string[]; question: string } {
-    const says = [ack, ...briefLines(job.job, job.shortSite)];
-    const q = call.bookingQuote;
-    if (!q) return { says, question: BRIEF_QUESTION };
-    const est = spokenEstimate(q);
-    says.push(`We'd like to go ahead and book you.${est ? ` You'd quoted us ${est}.` : ''}`);
-    const at = call.pendingArrival;
+    d: { vendorQuestion: string | null; answer: string | null },
+    set: NonNullable<TurnPlan['set']>,
+    meta: Pick<TurnPlan, 'model' | 'latencyMs' | 'action'>,
+  ): TurnPlan {
+    const answer = d.answer && shortLine(d.answer);
     return {
-      says,
-      question: at ? `Does ${formatSpokenTime(at, now)} still work for you?` : BRIEF_QUESTION,
+      says: [answer || NO_DETAIL],
+      question: call.lastQuestion,
+      set,
+      vendorAsked: answer ? null : d.vendorQuestion,
+      ...meta,
     };
   }
 
   /**
-   * Quote call: the code asks the questions in order (company, estimate, arrival with a
-   * read-back, then the limit question once if the estimate is over the NTE) and the model
-   * extracts answers. Never books; closes with "our manager will confirm shortly".
+   * Quote call: the code asks the questions in order (company, price, arrival with a read-back,
+   * then the budget question once if the price is over the NTE) and the model extracts answers.
+   * Never books; closes with "Our manager will get back to you soon".
    */
   private planQuote(
     call: CallDoc,
@@ -867,9 +903,9 @@ export class CallService {
     const stated = d.estimate ? normalizeEstimate(d.estimate) : null;
     if (stated) set.estimate = stated;
     if (d.notes) set.quoteNotes = [...call.quoteNotes, d.notes];
-    const spoken = validArrival(parseSpokenArrival(speech, now), now);
-    const arrival =
-      spoken ?? validArrival(d.arrivalTime ? localIsoToUtc(d.arrivalTime) : null, now);
+    const heard = heardArrival(speech, d.arrivalTime, now);
+    const spoken = heard.spoken?.at ?? null;
+    const arrival = heard.arrival;
     // A yes to the read-back saves the arrival, whatever else the model decided this turn
     // (it can answer "continue", "end", or echo the time back a day off).
     const confirmed =
@@ -899,48 +935,52 @@ export class CallService {
       });
     const hasInfo = (): boolean =>
       Boolean(set.estimate ?? call.estimate ?? set.arrivalConfirmed ?? call.arrivalConfirmed);
-    const finish = (says: string[] = [QUOTE_CLOSE]): TurnPlan => ({
+    const finish = (says: string[] = QUOTE_CLOSE): TurnPlan => ({
       ...goodbye(says, 'quoted', null),
       quote: result(),
       set,
       ...meta,
     });
-    const ask = (question: string, extra: NonNullable<TurnPlan['set']> = {}): TurnPlan => ({
-      says: [],
+    const ask = (
+      says: string[],
+      question: string,
+      extra: NonNullable<TurnPlan['set']> = {},
+    ): TurnPlan => ({
+      says,
       question,
       set: { ...set, ...extra },
       ...meta,
     });
-    /** A model line goes in the Gather only if it is a question; else the pending one follows. */
-    const askModel = (say: string, extra: NonNullable<TurnPlan['set']> = {}): TurnPlan => ({
-      ...ask('', extra),
-      ...modelLine(say, call.lastQuestion),
-    });
-    const readBack = (at: Date): TurnPlan =>
-      ask(`Okay, so that's ${formatSpokenTime(at, now)}, right?`, {
-        quoteStage: 'arrival',
-        stageTries: 0,
-        pendingArrival: at,
-      });
-    const askArrival = (): TurnPlan => {
-      const heard = arrival ?? call.heardArrival;
-      return heard
-        ? readBack(heard)
-        : ask(ARRIVAL_QUESTION, { quoteStage: 'arrival', stageTries: 0 });
+    /** A model follow-up if it's a short question; else the fixed question for this step. */
+    const askModel = (fallback: string, extra: NonNullable<TurnPlan['set']> = {}): TurnPlan => {
+      const line = shortLine(d.say);
+      return { ...ask([], fallback, extra), ...(line ? modelLine(line, fallback) : {}) };
     };
-    const afterArrival = (confirmed: Date | null): TurnPlan => {
-      set.arrivalConfirmed = confirmed;
+    const afterArrival = (at: Date | null, says: string[] = []): TurnPlan => {
+      set.arrivalConfirmed = at;
       if (!call.nteAsked && overNte(set.estimate ?? call.estimate, nte)) {
-        return ask(
-          `Just so you know, our limit on this one is ${nte} dollars. Any chance you could work within that?`,
-          {
-            quoteStage: 'limit',
-            stageTries: 0,
-            nteAsked: true,
-          },
-        );
+        return ask(says, budgetQuestion(nte), {
+          quoteStage: 'limit',
+          stageTries: 0,
+          nteAsked: true,
+        });
       }
-      return finish();
+      return finish([...says, ...QUOTE_CLOSE]);
+    };
+    /** Clear day and time: "Tuesday the 3rd at 11 AM, got it." Vague: read back and ask. */
+    const onArrival = (a: SpokenArrival, says: string[] = []): TurnPlan =>
+      a.relative
+        ? ask(says, isThatRight(cap(spokenDayDate(a.at, undefined, now))), {
+            quoteStage: 'arrival',
+            stageTries: 0,
+            pendingArrival: a.at,
+          })
+        : afterArrival(a.at, [...says, gotIt(cap(spokenDayDate(a.at, undefined, now)))]);
+    const askArrival = (says: string[]): TurnPlan => {
+      const early = arrival ?? heardFromState(call.heardArrival);
+      return early
+        ? onArrival(early, says)
+        : ask(says, ARRIVAL_QUESTION, { quoteStage: 'arrival', stageTries: 0 });
     };
 
     switch (d.action) {
@@ -949,7 +989,7 @@ export class CallService {
       case 'request_callback':
         return {
           ...goodbye([d.say], 'callback_requested', d.reason ?? speech.slice(0, 200)),
-          callbackAt: arrival,
+          callbackAt: arrival?.at ?? null,
           set,
           ...meta,
         };
@@ -960,48 +1000,58 @@ export class CallService {
     }
 
     let plan: TurnPlan;
-    switch (call.quoteStage) {
-      case 'identity':
-        if (arrival) set.heardArrival = arrival;
-        plan = {
-          says: [shortAck(d.say), ...quoteBriefLines(job.job, job.shortSite)],
-          question: ESTIMATE_QUESTION,
-          set: { ...set, briefRead: true, quoteStage: 'estimate', stageTries: 0 },
-          ...meta,
-        };
-        break;
-      case 'estimate':
-        if (arrival) set.heardArrival = arrival;
-        if (stated) {
-          plan = askArrival();
-        } else if (call.stageTries >= 1) {
-          // Two unclear answers: record "no estimate" and move on.
-          set.estimate = call.estimate ?? normalizeEstimate({ quoteType: 'none' })!;
-          plan = askArrival();
-        } else {
-          plan = askModel(d.say, { stageTries: call.stageTries + 1 });
+    if (d.vendorQuestion && !stated && !arrival && !confirmed && call.quoteStage !== 'identity') {
+      plan = this.answerVendor(call, d, set, meta);
+    } else {
+      switch (call.quoteStage) {
+        case 'identity':
+          if (arrival) set.heardArrival = arrival.at;
+          plan = ask(
+            [
+              'Great.',
+              jobSentence(job.job.requestText, job.job.title, job.shortSite),
+              TIMING[job.job.urgency],
+            ],
+            ESTIMATE_QUESTION,
+            { briefRead: true, quoteStage: 'estimate', stageTries: 0 },
+          );
+          break;
+        case 'estimate':
+          if (arrival) set.heardArrival = arrival.at;
+          if (stated) {
+            plan = askArrival(['Got it.']);
+          } else if (call.stageTries >= 1) {
+            // Two unclear answers: record "no estimate" and move on.
+            set.estimate = call.estimate ?? normalizeEstimate({ quoteType: 'none' })!;
+            plan = askArrival([]);
+          } else {
+            plan = ask([], ESTIMATE_NUDGE, { stageTries: call.stageTries + 1 });
+          }
+          break;
+        case 'arrival':
+          if (confirmed) {
+            plan = afterArrival(confirmed);
+          } else if (
+            arrival &&
+            !(call.pendingArrival && sameMinute(arrival.at, call.pendingArrival))
+          ) {
+            plan = onArrival(arrival);
+          } else if (call.stageTries >= 1) {
+            plan = afterArrival(null);
+          } else {
+            plan = askModel(ARRIVAL_QUESTION, { stageTries: call.stageTries + 1 });
+          }
+          break;
+        case 'limit': {
+          const answer = d.withinNte ?? (d.action === 'agree' ? 'yes' : null);
+          if (answer || call.stageTries >= 1) {
+            set.nteAnswer = answer;
+            plan = finish();
+          } else {
+            plan = askModel(budgetQuestion(nte), { stageTries: call.stageTries + 1 });
+          }
+          break;
         }
-        break;
-      case 'arrival':
-        if (confirmed) {
-          plan = afterArrival(confirmed);
-        } else if (arrival && !(call.pendingArrival && sameMinute(arrival, call.pendingArrival))) {
-          plan = readBack(arrival);
-        } else if (call.stageTries >= 1) {
-          plan = afterArrival(null);
-        } else {
-          plan = askModel(d.say, { stageTries: call.stageTries + 1 });
-        }
-        break;
-      case 'limit': {
-        const answer = d.withinNte ?? (d.action === 'agree' ? 'yes' : null);
-        if (answer || call.stageTries >= 1) {
-          set.nteAnswer = answer;
-          plan = finish();
-        } else {
-          plan = askModel(d.say, { stageTries: call.stageTries + 1 });
-        }
-        break;
       }
     }
 
@@ -1021,20 +1071,27 @@ export class CallService {
     return plan;
   }
 
+  /** What the agent may say about the job: the original request, work order and site. */
   private async jobFor(call: CallDoc): Promise<{ job: CallJob; shortSite: string }> {
     const wo = await WorkOrderModel.findById(call.workOrderId).lean();
-    const site = wo ? await SiteModel.findById(wo.siteId).lean() : null;
-    const street = site ? site.address.split(',').slice(0, 2).join(',').trim() : '';
+    const [site, proposal] = await Promise.all([
+      wo ? SiteModel.findById(wo.siteId).lean() : null,
+      wo?.proposalId ? ProposalModel.findById(wo.proposalId).lean() : null,
+    ]);
+    const parts = site ? site.address.split(',').map((x) => x.trim()) : [];
+    const requestText =
+      proposal?.signalType === 'request' ? proposal.inputText : (wo?.description ?? '');
     return {
       shortSite: site?.shortName ?? call.siteName,
       job: {
         companyName: SPOKEN_COMPANY,
         vendorName: call.vendorName,
         siteName: call.siteName.replace(/&/g, 'and'),
-        siteAddress: street,
-        workOrderNumber: call.workOrderNumber,
+        siteAddress: parts.slice(0, 2).join(', '),
+        street: parts[0] ?? '',
         title: wo?.title ?? call.workOrderTitle,
         description: wo?.description ?? '',
+        requestText,
         locationText: wo?.locationText ?? '',
         urgency: wo?.urgency ?? 'routine',
         window: windowText(wo?.urgency ?? 'routine'),
@@ -1152,7 +1209,7 @@ export class CallService {
 const isQuestion = (line: string): boolean => /\?["')\s]*$/.test(line);
 
 /** Lines the agent listens after that aren't phrased as questions. */
-const PROMPTS = new Set<string>();
+const PROMPTS = LISTEN_LINES;
 
 /**
  * True when the agent's last line asked for an answer, so silence earns one re-ask. The answer
@@ -1181,6 +1238,26 @@ function quoteFromState(call: CallDoc, nte: number): QuoteResult | null {
     confidences: call.transcript.map((t) => t.confidence).filter((c): c is number => c !== null),
   });
 }
+
+/**
+ * The arrival in this reply. The vendor's own words win; the model's arrivalTime fills in when
+ * the parser found nothing, and then counts as vague, so it is read back for a yes.
+ */
+function heardArrival(
+  speech: string,
+  modelTime: string | null,
+  now: Date,
+): { spoken: SpokenArrival | null; arrival: SpokenArrival | null } {
+  const parsed = parseArrival(speech, now);
+  const spoken = parsed && validArrival(parsed.at, now) ? parsed : null;
+  if (spoken) return { spoken, arrival: spoken };
+  const fromModel = validArrival(modelTime ? localIsoToUtc(modelTime) : null, now);
+  return { spoken: null, arrival: fromModel ? { at: fromModel, relative: true } : null };
+}
+
+/** A time mentioned before the arrival question: read back for a yes when we get there. */
+const heardFromState = (at: Date | null): SpokenArrival | null =>
+  at ? { at, relative: true } : null;
 
 function validArrival(at: Date | null, now: Date): Date | null {
   if (!at || Number.isNaN(at.getTime())) return null;

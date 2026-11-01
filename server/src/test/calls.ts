@@ -58,6 +58,8 @@ export class ScriptedLlm implements LlmClient {
       action: 'continue',
       arrivalTime: null,
       reason: null,
+      vendorQuestion: null,
+      answer: null,
       ...defaults,
       ...next,
     });
@@ -78,4 +80,18 @@ export function signedPost(
 ) {
   const sig = twilio.getExpectedTwilioSignature(TOKEN, `${PUBLIC}${path}`, params);
   return request(app).post(path).type('form').set('X-Twilio-Signature', sig).send(params);
+}
+
+/** The words the agent speaks in a TwiML response, in order, as one string. */
+export function spoken(twiml: string): string {
+  return [...twiml.matchAll(/<Say[^>]*>([\s\S]*?)<\/Say>/g)]
+    .map((m) =>
+      m[1]!
+        .replace(/&apos;/g, "'")
+        .replace(/&quot;/g, '"')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&amp;/g, '&'),
+    )
+    .join(' ');
 }
