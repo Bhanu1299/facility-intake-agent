@@ -43,7 +43,8 @@ export function SettingsPage() {
         <p className="mt-1 text-sm text-slate-600">
           With the key, dispatched work orders show a “Call vendor” button. The key stays in this
           browser tab only (session storage). Calls only ever go to the demo phone number, at most{' '}
-          {config.data?.maxPerHour ?? 3} per hour.
+          {config.data?.maxPerHour ?? 12} per hour and {config.data?.maxPerWorkOrder ?? 6} per work
+          order.
         </p>
         {adminKey ? (
           <div className="mt-4 flex flex-wrap items-center gap-3">

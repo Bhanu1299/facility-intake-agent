@@ -7,6 +7,7 @@ import {
   type DuplicateInfo,
   type ProposalAction,
   type ProposalStatus,
+  type QuotesInfo,
   type ReassignInfo,
   type SafetyRuleHit,
   type SignalInput,
@@ -67,6 +68,7 @@ export interface ProposalDoc {
   budget: BudgetCheck;
   duplicate: DuplicateInfo | null;
   reassign?: ReassignInfo | null;
+  quotes?: QuotesInfo | null;
   repeatIssueNote: string | null;
   trendNote: string | null;
   needsHuman: boolean;
@@ -101,6 +103,7 @@ const ProposalSchema = new Schema<ProposalDoc>(
     budget: { type: Mixed, required: true },
     duplicate: { type: Mixed, default: null },
     reassign: { type: Mixed, default: null },
+    quotes: { type: Mixed, default: null },
     repeatIssueNote: { type: String, default: null },
     trendNote: { type: String, default: null },
     needsHuman: { type: Boolean, required: true },

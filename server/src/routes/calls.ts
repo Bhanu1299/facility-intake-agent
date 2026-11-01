@@ -1,8 +1,16 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
 import express, { Router, type RequestHandler, type Response } from 'express';
 import twilio from 'twilio';
 import type { CallConfig } from '@fia/shared';
-import { CallError, MAX_CALLS_PER_HOUR, type CallService } from '../calls/service';
+import {
+  CallError,
+  MAX_CALLS_PER_HOUR,
+  MAX_CALLS_PER_WORK_ORDER,
+  type CallService,
+} from '../calls/service';
 import type { Env } from '../env';
+import type { ChainService } from '../dispatch/chain';
+import { toChainRecord } from '../dispatch/models';
 import { CallModel, toCallRecord } from '../models/call';
 
 const ADMIN_HEADER = 'x-admin-key';
@@ -16,11 +24,24 @@ function sendError(res: Response, err: unknown): void {
 }
 
 /** Call start (admin only) and read-only call records for the UI. */
-export function callsRouter(calls: CallService, limiter: RequestHandler): Router {
+export function callsRouter(
+  calls: CallService,
+  chains: ChainService,
+  limiter: RequestHandler,
+): Router {
   const router = Router();
 
+  router.get('/work-orders/:id/chain', async (req, res) => {
+    const found = await chains.forWorkOrder(String(req.params.id));
+    res.json(found ? toChainRecord(found.chain, found.nextCallAt) : null);
+  });
+
   router.get('/calls/config', (_req, res) => {
-    const body: CallConfig = { enabled: calls.enabled(), maxPerHour: MAX_CALLS_PER_HOUR };
+    const body: CallConfig = {
+      enabled: calls.enabled(),
+      maxPerHour: MAX_CALLS_PER_HOUR,
+      maxPerWorkOrder: MAX_CALLS_PER_WORK_ORDER,
+    };
     res.json(body);
   });
 
@@ -67,6 +88,28 @@ export function callsRouter(calls: CallService, limiter: RequestHandler): Router
     res.json(toCallRecord(doc));
   });
 
+  return router;
+}
+
+/**
+ * POST /api/jobs/run-due: runs scheduled calls that are due. For an external cron; the server
+ * also runs it on startup and every 2 minutes while awake. Needs X-Jobs-Secret = JOBS_SECRET.
+ */
+export function jobsRouter(env: Pick<Env, 'JOBS_SECRET'>, chains: ChainService): Router {
+  const router = Router();
+  router.post('/jobs/run-due', async (req, res) => {
+    const given = req.header('x-jobs-secret');
+    const digest = (s: string) => createHash('sha256').update(s).digest();
+    if (!env.JOBS_SECRET) {
+      res.status(503).json({ error: 'JOBS_SECRET is not set' });
+      return;
+    }
+    if (!given || !timingSafeEqual(digest(given), digest(env.JOBS_SECRET))) {
+      res.status(401).json({ error: 'Invalid jobs secret' });
+      return;
+    }
+    res.json({ placed: await chains.runDue() });
+  });
   return router;
 }
 

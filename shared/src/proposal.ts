@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ProposalAction, ProposalStatus, URGENCY_RANK } from './enums';
+import { QuotesInfo } from './dispatch';
 import { WorkOrderDraft } from './workOrder';
 
 export const VendorRecommendation = z.object({
@@ -82,6 +83,8 @@ export const Proposal = z.object({
   duplicate: DuplicateInfo.nullable(),
   /** Set on `reassign` proposals. Older proposals may not have the field. */
   reassign: ReassignInfo.nullable().optional(),
+  /** Set on `quotes` proposals. */
+  quotes: QuotesInfo.nullable().optional(),
   repeatIssueNote: z.string().nullable(),
   /** Sensor signals only: "at this rate it crosses the threshold in about N days." */
   trendNote: z.string().nullable(),

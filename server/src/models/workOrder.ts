@@ -4,6 +4,7 @@ import {
   URGENCIES,
   WORK_ORDER_STATUSES,
   type DispatchEmail,
+  type QuoteResult,
   type Trade,
   type Urgency,
   type WorkOrderStatus,
@@ -29,6 +30,8 @@ export interface WorkOrderDoc {
   /** Confirmed arrival time from the dispatch call. Optional: seeded rows don't set it. */
   eta?: Date | null;
   declinedVendorIds?: string[];
+  /** Winning quote (approximate), stored when the booking call confirms. */
+  agreedQuote?: QuoteResult | null;
   actualCost: number | null;
   createdAt: Date;
   updatedAt: Date;
@@ -68,6 +71,7 @@ const WorkOrderSchema = new Schema<WorkOrderDoc>(
     },
     eta: { type: Date, default: null },
     declinedVendorIds: { type: [String], default: [] },
+    agreedQuote: { type: Schema.Types.Mixed, default: null },
     actualCost: { type: Number, default: null },
     createdAt: { type: Date, required: true },
     updatedAt: { type: Date, required: true },

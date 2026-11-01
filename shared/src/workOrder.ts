@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { QuoteResult } from './call';
 import { Trade, TradeOrUnknown, Urgency, WorkOrderStatus } from './enums';
 
 /** The fields a manager sees and can edit before approving. One shape for proposal and work order. */
@@ -43,6 +44,8 @@ export const WorkOrder = WorkOrderDraft.extend({
   eta: z.string().nullable().optional(),
   /** Vendors who declined this work order on a call; never proposed again for it. */
   declinedVendorIds: z.array(z.string()).optional(),
+  /** The winning quote (approximate), stored when the booking call confirms. */
+  agreedQuote: QuoteResult.nullable().optional(),
   /** Final invoiced cost once completed (moves from Committed to Spent). */
   actualCost: z.number().nonnegative().nullable(),
   createdAt: z.string(),

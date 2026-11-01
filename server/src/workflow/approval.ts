@@ -1,4 +1,10 @@
-import { URGENCY_RANK, WorkOrderDraft, type Trade, type WorkOrderDraftPatch } from '@fia/shared';
+import {
+  URGENCY_RANK,
+  WorkOrderDraft,
+  formatEstimate,
+  type Trade,
+  type WorkOrderDraftPatch,
+} from '@fia/shared';
 import { logActivity } from '../activity';
 import { AssetModel, BudgetModel, SiteModel, VendorModel } from '../models/catalog';
 import { ProposalModel, type ProposalDoc } from '../models/pipeline';
@@ -42,9 +48,17 @@ async function validateDraftRefs(draft: WorkOrderDraft): Promise<void> {
   }
 }
 
+/** Quotes proposals: the manager picks one of the vendors who quoted. */
+function assertQuoted(p: ProposalDoc, vendorId: string): void {
+  if (!p.quotes?.cards.some((c) => c.vendorId === vendorId)) {
+    throw new ApprovalError('Pick one of the vendors who quoted', 400);
+  }
+}
+
 /** A vendor who declined a work order on the dispatch call is never assigned it again. */
 async function assertNotDeclined(p: ProposalDoc, vendorId: string): Promise<void> {
-  const wo = p.reassign ? await WorkOrderModel.findById(p.reassign.workOrderId).lean() : null;
+  const targetId = p.reassign?.workOrderId ?? p.quotes?.workOrderId;
+  const wo = targetId ? await WorkOrderModel.findById(targetId).lean() : null;
   if (wo?.declinedVendorIds?.includes(vendorId)) {
     const name = (await VendorModel.findById(vendorId).lean())?.name ?? vendorId;
     throw new ApprovalError(`${name} already declined this job; choose another vendor`, 409);
@@ -61,11 +75,17 @@ export async function editProposal(id: string, patch: WorkOrderDraftPatch): Prom
   if (!APPROVABLE.includes(p.status as (typeof APPROVABLE)[number])) {
     throw new ApprovalError(`Proposal is ${p.status}; it can no longer be edited`, 409);
   }
-  if (p.action === 'reassign') {
+  if (p.action === 'reassign' || p.action === 'quotes') {
     if (Object.keys(patch).some((k) => k !== 'vendorId')) {
-      throw new ApprovalError('A reassignment only changes the vendor', 400);
+      throw new ApprovalError(
+        p.action === 'quotes'
+          ? 'Picking a quote only sets the vendor'
+          : 'A reassignment only changes the vendor',
+        400,
+      );
     }
     if (patch.vendorId) await assertNotDeclined(p, patch.vendorId);
+    if (patch.vendorId && p.action === 'quotes') assertQuoted(p, patch.vendorId);
   }
   const draft = WorkOrderDraft.parse({ ...p.draft, ...patch });
   await validateDraftRefs(draft);
@@ -133,7 +153,11 @@ async function existingResult(id: string): Promise<ApprovalResult> {
     const workOrder = proposal.workOrderId
       ? await WorkOrderModel.findById(proposal.workOrderId).lean()
       : null;
-    if (workOrder && (workOrder.status !== 'approved' || proposal.action === 'merge')) {
+    // Quote mode leaves a new work order at approved with no vendor while quotes come in.
+    if (
+      workOrder &&
+      (workOrder.status !== 'approved' || proposal.action === 'merge' || !workOrder.vendorId)
+    ) {
       return { proposal, workOrder, created: false };
     }
     await new Promise((r) => setTimeout(r, 100));
@@ -145,9 +169,18 @@ async function existingResult(id: string): Promise<ApprovalResult> {
  * POST /api/proposals/:id/approve. Idempotent: a second (or concurrent) approve returns the same
  * work order and never commits budget twice.
  */
+export interface ApproveOptions {
+  /**
+   * False for Quote mode: create the work order (NTE committed) but don't dispatch it; the call
+   * chain collects quotes first. Default true.
+   */
+  dispatch?: boolean;
+}
+
 export async function approveProposal(
   id: string,
   patch: WorkOrderDraftPatch | undefined,
+  opts: ApproveOptions = {},
 ): Promise<ApprovalResult> {
   const settings = await SettingsModel.findById('global').lean();
   if (settings?.autonomyMode === 'advise') {
@@ -166,7 +199,12 @@ export async function approveProposal(
   if (draft.trade === 'unknown') {
     throw new ApprovalError('Set the trade before approving (the agent could not tell)', 409);
   }
-  if (!draft.vendorId) throw new ApprovalError('Choose a vendor before approving', 409);
+  if (!draft.vendorId) {
+    throw new ApprovalError(
+      p.action === 'quotes' ? 'Pick one of the quotes first' : 'Choose a vendor before approving',
+      409,
+    );
+  }
   await validateDraftRefs(draft);
   const trade: Trade = draft.trade;
 
@@ -183,15 +221,18 @@ export async function approveProposal(
       ? p.duplicate?.workOrderId
       : p.action === 'reassign'
         ? p.reassign?.workOrderId
-        : undefined;
+        : p.action === 'quotes'
+          ? p.quotes?.workOrderId
+          : undefined;
   const target = targetId ? await WorkOrderModel.findById(targetId).lean() : null;
   if (p.action !== 'create' && !target) {
     throw new ApprovalError(
-      `The work order to ${p.action === 'merge' ? 'merge into' : 'reassign'} no longer exists`,
+      `The work order to ${p.action === 'merge' ? 'merge into' : 'update'} no longer exists`,
       409,
     );
   }
-  if (p.action === 'reassign') await assertNotDeclined(p, vendor._id);
+  if (p.action === 'reassign' || p.action === 'quotes') await assertNotDeclined(p, vendor._id);
+  if (p.action === 'quotes') assertQuoted(p, vendor._id);
   const workOrderId = target?._id ?? `wo_${id}`;
 
   // 1. Claim the proposal atomically. Only one caller gets past this line.
@@ -204,11 +245,18 @@ export async function approveProposal(
   if (!claimed) return existingResult(id);
 
   try {
-    if (target && p.action === 'reassign')
+    if (target && (p.action === 'reassign' || p.action === 'quotes'))
       return await applyReassign(claimed, target, vendor, site);
     return target
       ? await applyMerge(claimed, target, draft, vendor, site)
-      : await applyCreate(claimed, workOrderId, { ...draft, trade }, vendor, site);
+      : await applyCreate(
+          claimed,
+          workOrderId,
+          { ...draft, trade },
+          vendor,
+          site,
+          opts.dispatch ?? true,
+        );
   } catch (err) {
     await releaseClaim(id, previousStatus);
     throw err;
@@ -228,6 +276,7 @@ async function applyCreate(
   draft: WorkOrderDraft & { trade: Trade },
   vendor: Vendor,
   site: Site,
+  dispatch: boolean,
 ): Promise<ApprovalResult> {
   // 2. Commit NTE: Available -> Committed (once per work order, never past Available).
   const commit = await commitBudget(draft.siteId, `create:${workOrderId}`, draft.nte);
@@ -247,6 +296,8 @@ async function applyCreate(
       _id: workOrderId,
       number: await nextWorkOrderNumber(),
       ...draft,
+      // Quote mode: no vendor until the manager picks one from the quotes.
+      vendorId: dispatch ? draft.vendorId : null,
       status: 'approved',
       proposalId: p._id,
       notes: [],
@@ -264,12 +315,12 @@ async function applyCreate(
       proposalId: p._id,
       workOrderId,
       inputSummary: `Approved proposal: ${draft.title}`,
-      outputSummary: `Created ${wo.number} [${draft.urgency}], committed $${draft.nte} to ${site.name} budget`,
+      outputSummary: `Created ${wo.number} [${draft.urgency}], committed $${draft.nte} to ${site.name} budget${dispatch ? '' : '; collecting quotes before dispatch'}`,
     });
   }
 
   // 4. Dispatch: draft the vendor email (stored, never sent) and move to dispatched.
-  if (wo.status === 'approved') {
+  if (wo.status === 'approved' && wo.vendorId) {
     assertTransition('approved', 'dispatched');
     const email = buildDispatchEmail({
       vendor,
@@ -386,8 +437,14 @@ async function applyReassign(
     signalId: p.signalId,
     proposalId: p._id,
     workOrderId: target._id,
-    inputSummary: `Approved reassignment of ${target.number}`,
-    outputSummary: `Vendor ${p.reassign?.previousVendorName ?? 'previous vendor'} → ${vendor.name}; NTE $${target.nte} stays committed`,
+    inputSummary:
+      p.action === 'quotes'
+        ? `Picked ${vendor.name} from ${p.quotes?.cards.length ?? 0} quotes for ${target.number}`
+        : `Approved reassignment of ${target.number}`,
+    outputSummary:
+      p.action === 'quotes'
+        ? `Quoted ${quotedText(p, vendor._id)} (approximate); NTE $${target.nte} stays committed`
+        : `Vendor ${p.reassign?.previousVendorName ?? 'previous vendor'} → ${vendor.name}; NTE $${target.nte} stays committed`,
   });
   assertTransition('approved', 'dispatched');
   const email = buildDispatchEmail({
@@ -413,6 +470,11 @@ async function applyReassign(
     workOrder: (await WorkOrderModel.findById(target._id).lean())!,
     created: true,
   };
+}
+
+function quotedText(p: ProposalDoc, vendorId: string): string {
+  const card = p.quotes?.cards.find((c) => c.vendorId === vendorId);
+  return card ? formatEstimate(card.quote) : 'no estimate';
 }
 
 /** POST /api/proposals/:id/reject — reason required, logged. Idempotent. */

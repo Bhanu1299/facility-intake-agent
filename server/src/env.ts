@@ -33,6 +33,14 @@ const EnvSchema = z.object({
     .transform((v) => v === 'true'),
   /** Public base URL of this API (the Render URL); Twilio webhooks are built and signed on it. */
   PUBLIC_API_URL: z.string().default(''),
+  /** Wait before retrying a missed routine / low call (set to 2 for a demo video). */
+  DEMO_RETRY_MINUTES: z.coerce
+    .number()
+    .positive()
+    .max(24 * 60)
+    .default(90),
+  /** Secret for POST /api/jobs/run-due (an external cron in production). Unset = route disabled. */
+  JOBS_SECRET: z.string().default(''),
 });
 export type Env = z.infer<typeof EnvSchema>;
 

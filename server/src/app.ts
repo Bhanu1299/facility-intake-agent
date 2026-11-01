@@ -8,7 +8,8 @@ import { dbState } from './db';
 import { LlmError, OpenAiCompatibleClient, type LlmClient } from './llm/client';
 import { catalogRouter } from './routes/catalog';
 import { demoRouter } from './routes/demo';
-import { callsRouter, twilioRouter } from './routes/calls';
+import { callsRouter, jobsRouter, twilioRouter } from './routes/calls';
+import { ChainService } from './dispatch/chain';
 import { activityRouter, proposalsRouter } from './routes/proposals';
 import { demoRateLimit } from './routes/rateLimit';
 import { PipelineRunner, signalsRouter } from './routes/signals';
@@ -54,7 +55,7 @@ export interface AppDeps {
 }
 
 export type App = express.Express & {
-  locals: { pipelines: PipelineRunner; calls: CallService };
+  locals: { pipelines: PipelineRunner; calls: CallService; chains: ChainService };
 };
 
 export function createApp(env: Env, deps: AppDeps = {}): App {
@@ -73,6 +74,8 @@ export function createApp(env: Env, deps: AppDeps = {}): App {
     now: deps.now,
   });
   app.locals.calls = calls;
+  const chains = new ChainService({ env, calls, now: deps.now });
+  app.locals.chains = chains;
 
   // Render (and most hosts) sit behind one proxy; needed for per-IP rate limiting.
   app.set('trust proxy', 1);
@@ -96,12 +99,13 @@ export function createApp(env: Env, deps: AppDeps = {}): App {
 
   app.use('/api', catalogRouter());
   app.use('/api', signalsRouter(pipelines, limiter));
-  app.use('/api', proposalsRouter());
+  app.use('/api', proposalsRouter(calls, chains));
   app.use('/api', activityRouter());
   app.use('/api', workOrdersRouter());
   app.use('/api', settingsRouter());
   app.use('/api/demo', demoRouter(env, limiter));
-  app.use('/api', callsRouter(calls, limiter));
+  app.use('/api', callsRouter(calls, chains, limiter));
+  app.use('/api', jobsRouter(env, chains));
   app.use('/api/twilio/voice', twilioRouter(env, calls));
 
   app.use('/api', (_req, res) => {

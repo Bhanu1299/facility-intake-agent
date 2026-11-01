@@ -1,12 +1,17 @@
 import { Schema, model } from 'mongoose';
 import {
   CALL_OUTCOMES,
+  CALL_PURPOSES,
   CALL_STATUSES,
   type CallOutcome,
+  type CallPurpose,
+  type QuoteEstimate,
+  type QuoteResult,
   type CallRecord,
   type CallStatus,
   type CallTranscriptTurn,
 } from '@fia/shared';
+import type { QuoteStage } from '../calls/quote';
 import { baseOptions } from './common';
 
 type TranscriptTurnDoc = Omit<CallTranscriptTurn, 'at'> & { at: Date };
@@ -25,6 +30,13 @@ export interface CallDoc {
   vendorId: string;
   vendorName: string;
   siteName: string;
+  /** Older records have no purpose; they were booking calls. */
+  purpose: CallPurpose;
+  chainId: string | null;
+  /** Booking a quote winner: the quote being confirmed. */
+  bookingQuote: QuoteResult | null;
+  /** Quote calls: the final structured result. */
+  quote: QuoteResult | null;
   status: CallStatus;
   twilioStatus: string | null;
   outcome: CallOutcome | null;
@@ -56,6 +68,21 @@ export interface CallDoc {
   lastQuestion: string;
   /** Set when the outcome's side effects (work order, proposal, log) have been applied. */
   outcomeAppliedAt: Date | null;
+  /** Set once the chain hook has run for this call's final status. */
+  chainNotifiedAt: Date | null;
+
+  // Quote-call state.
+  quoteStage: QuoteStage;
+  /** Unclear answers at the current stage; after 2 the agent moves on. */
+  stageTries: number;
+  estimate: QuoteEstimate | null;
+  /** An arrival time mentioned before the arrival question, read back when we get there. */
+  heardArrival: Date | null;
+  /** Arrival the vendor said yes to on the read-back. */
+  arrivalConfirmed: Date | null;
+  nteAsked: boolean;
+  nteAnswer: 'yes' | 'no' | 'maybe' | null;
+  quoteNotes: string[];
 
   createdAt: Date;
   updatedAt: Date;
@@ -86,6 +113,10 @@ const CallSchema = new Schema<CallDoc>(
     vendorId: { type: String, required: true },
     vendorName: { type: String, required: true },
     siteName: { type: String, required: true },
+    purpose: { type: String, enum: CALL_PURPOSES, default: 'book' },
+    chainId: { type: String, default: null },
+    bookingQuote: { type: Schema.Types.Mixed, default: null },
+    quote: { type: Schema.Types.Mixed, default: null },
     status: { type: String, enum: CALL_STATUSES, required: true },
     twilioStatus: { type: String, default: null },
     outcome: { type: String, enum: [...CALL_OUTCOMES, null], default: null },
@@ -107,6 +138,15 @@ const CallSchema = new Schema<CallDoc>(
     pendingSpeech: { type: String, default: null },
     lastQuestion: { type: String, default: '' },
     outcomeAppliedAt: { type: Date, default: null },
+    chainNotifiedAt: { type: Date, default: null },
+    quoteStage: { type: String, default: 'identity' },
+    stageTries: { type: Number, default: 0 },
+    estimate: { type: Schema.Types.Mixed, default: null },
+    heardArrival: { type: Date, default: null },
+    arrivalConfirmed: { type: Date, default: null },
+    nteAsked: { type: Boolean, default: false },
+    nteAnswer: { type: String, default: null },
+    quoteNotes: { type: [String], default: [] },
     createdAt: { type: Date, required: true },
     updatedAt: { type: Date, required: true },
     endedAt: { type: Date, default: null },
@@ -116,6 +156,7 @@ const CallSchema = new Schema<CallDoc>(
 CallSchema.index({ createdAt: -1 });
 CallSchema.index({ workOrderId: 1, createdAt: -1 });
 CallSchema.index({ callSid: 1 }, { sparse: true });
+CallSchema.index({ endedAt: 1, createdAt: -1 });
 
 export const CallModel = model<CallDoc>('Call', CallSchema);
 
@@ -130,6 +171,8 @@ export function toCallRecord(c: CallDoc): CallRecord {
     id: c._id,
     callSid: c.callSid,
     workOrderId: c.workOrderId,
+    purpose: c.purpose ?? 'book',
+    chainId: c.chainId ?? null,
     workOrderNumber: c.workOrderNumber,
     workOrderTitle: c.workOrderTitle,
     vendorId: c.vendorId,
@@ -142,6 +185,7 @@ export function toCallRecord(c: CallDoc): CallRecord {
     callbackAt: iso(c.callbackAt),
     reason: c.reason,
     reassignProposalId: c.reassignProposalId,
+    quote: c.quote ?? null,
     transcript: c.transcript.map((t) => ({ ...t, at: t.at.toISOString() })),
     summary: c.summary,
     durationSec: c.durationSec,

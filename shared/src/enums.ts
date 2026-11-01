@@ -41,9 +41,10 @@ export type WorkOrderStatus = z.infer<typeof WorkOrderStatus>;
 /** `advisory` = produced in Advise mode; it can be read but never approved. */
 /**
  * `create` = new work order, `merge` = attach a report to an open one, `reassign` = the vendor
- * declined on a dispatch call; propose the next vendor for the same work order.
+ * declined or missed a call; propose the next vendor for the same work order. `quotes` = quote
+ * calls are done; the manager picks a vendor from the comparison.
  */
-export const PROPOSAL_ACTIONS = ['create', 'merge', 'reassign'] as const;
+export const PROPOSAL_ACTIONS = ['create', 'merge', 'reassign', 'quotes'] as const;
 export const ProposalAction = z.enum(PROPOSAL_ACTIONS);
 export type ProposalAction = z.infer<typeof ProposalAction>;
 

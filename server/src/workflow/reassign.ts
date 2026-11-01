@@ -7,15 +7,29 @@ import { WorkOrderModel } from '../models/workOrder';
 import { rankVendors } from '../pipeline/plan';
 import { assertTransition } from './lifecycle';
 
+export interface NextVendorOptions {
+  /** Vendor to propose. Omitted = the next ranked eligible one; null = none (needs a human). */
+  vendorId?: string | null;
+  /** True (default): the vendor declined and is never proposed again for this work order. */
+  declined?: boolean;
+  /** Also left out of the ranking, e.g. vendors a call chain already tried. */
+  excludeVendorIds?: string[];
+  needsHumanReason?: string;
+  /** Defaults to prop_reassign_<call id>. */
+  proposalId?: string;
+}
+
 /**
- * A vendor declined on the dispatch call: the work order goes back to approved (its budget
- * commitment stays), and a `reassign` proposal suggests the next ranked vendor. The manager
- * approves it like any other proposal. Idempotent: the proposal id is derived from the call.
+ * A vendor declined (or, in a call chain, couldn't be reached): the work order goes back to
+ * approved (its budget commitment stays), and a `reassign` proposal suggests the next vendor.
+ * The manager approves it like any other proposal. Idempotent: the proposal id is fixed.
  */
 export async function proposeNextVendor(
   call: Pick<CallDoc, '_id' | 'workOrderId' | 'vendorId' | 'vendorName' | 'reason'>,
   now: Date,
+  opts: NextVendorOptions = {},
 ): Promise<string | null> {
+  const declined = opts.declined ?? true;
   const wo = await WorkOrderModel.findById(call.workOrderId).lean();
   if (!wo) return null;
 
@@ -25,7 +39,7 @@ export async function proposeNextVendor(
       { _id: wo._id, status: 'dispatched', vendorId: call.vendorId },
       {
         $set: { status: 'approved', vendorId: null, updatedAt: now },
-        $addToSet: { declinedVendorIds: call.vendorId },
+        ...(declined ? { $addToSet: { declinedVendorIds: call.vendorId } } : {}),
       },
     );
     if (res.modifiedCount === 1) {
@@ -33,14 +47,14 @@ export async function proposeNextVendor(
         step: 'call',
         actor: 'system',
         workOrderId: wo._id,
-        inputSummary: `${call.vendorName} declined ${wo.number}`,
+        inputSummary: `${call.vendorName} ${declined ? 'declined' : 'was not reached about'} ${wo.number}`,
         outputSummary: 'Status dispatched → approved; budget commitment kept',
         reason: call.reason,
       });
     }
   }
 
-  const id = `prop_reassign_${call._id}`;
+  const id = opts.proposalId ?? `prop_reassign_${call._id}`;
   if (await ProposalModel.exists({ _id: id })) return id;
 
   const [site, vendors, budget, original, settings] = await Promise.all([
@@ -51,10 +65,20 @@ export async function proposeNextVendor(
     SettingsModel.findById('global').lean(),
   ]);
   if (!site) return null;
-  const declined = new Set([...(wo.declinedVendorIds ?? []), call.vendorId]);
+  const skip = new Set([
+    ...(wo.declinedVendorIds ?? []),
+    ...(opts.excludeVendorIds ?? []),
+    call.vendorId,
+  ]);
   const ranking = rankVendors(vendors, site, wo.trade, wo.urgency, now);
-  const top = ranking.top.filter((v) => !declined.has(v.vendorId));
-  const next = top[0] ?? null;
+  const top = ranking.top.filter((v) => !skip.has(v.vendorId));
+  const next =
+    opts.vendorId === null
+      ? null
+      : opts.vendorId
+        ? (ranking.top.find((v) => v.vendorId === opts.vendorId) ?? null)
+        : (top[0] ?? null);
+  const why = call.reason ?? (declined ? 'Declined on the dispatch call' : 'Not reached by phone');
   const available = budget ? budget.total - budget.committed - budget.spent : 0;
 
   try {
@@ -88,21 +112,29 @@ export async function proposeNextVendor(
         workOrderNumber: wo.number,
         previousVendorId: call.vendorId,
         previousVendorName: call.vendorName,
-        reason: call.reason ?? 'Declined on the dispatch call',
+        reason: why,
         callId: call._id,
       },
       repeatIssueNote: null,
       trendNote: null,
       needsHuman: !next,
-      needsHumanReason: next ? null : 'No other eligible vendor; choose one manually',
+      needsHumanReason: next
+        ? null
+        : (opts.needsHumanReason ?? 'No other eligible vendor; choose one manually'),
       clarifyingQuestion: null,
       confidence: 1,
       checks: [
-        {
-          name: 'Previous vendor declined',
-          passed: true,
-          detail: `${call.vendorName} declined on the call; excluded from this proposal`,
-        },
+        declined
+          ? {
+              name: 'Previous vendor declined',
+              passed: true,
+              detail: `${call.vendorName} declined on the call; excluded from this proposal`,
+            }
+          : {
+              name: 'Previous vendor not reached',
+              passed: true,
+              detail: `${call.vendorName}: ${why}`,
+            },
       ],
       excludedVendors: ranking.excluded.map(({ name, reason }) => ({ name, reason })),
       modelUsed: null,
@@ -123,10 +155,10 @@ export async function proposeNextVendor(
     actor: 'system',
     proposalId: id,
     workOrderId: wo._id,
-    inputSummary: `Reassign ${wo.number} after ${call.vendorName} declined`,
+    inputSummary: `Reassign ${wo.number} after ${call.vendorName} ${declined ? 'declined' : 'was not reached'}`,
     outputSummary: next
       ? `Proposed next vendor: ${next.name} (${next.reason})`
-      : 'No other eligible vendor; needs a human',
+      : `${opts.needsHumanReason ?? 'No other eligible vendor'}; needs a human`,
     reason: call.reason,
   });
   return id;

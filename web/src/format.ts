@@ -86,6 +86,7 @@ export const CALL_STATUS_LABEL: Record<CallStatus, string> = {
 
 export const CALL_OUTCOME_LABEL: Record<CallOutcome, string> = {
   confirmed: 'Confirmed',
+  quoted: 'Quote received',
   declined: 'Declined',
   callback_requested: 'Callback requested',
   opted_out: 'Asked not to be called',

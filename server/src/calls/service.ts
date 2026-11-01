@@ -1,12 +1,21 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import twilio from 'twilio';
-import type { CallAction, CallOutcome, Urgency } from '@fia/shared';
+import type {
+  CallAction,
+  CallOutcome,
+  CallPurpose,
+  QuoteResult,
+  QuoteTurnDecision,
+  Urgency,
+} from '@fia/shared';
+import { estimateCeiling, formatEstimate } from '@fia/shared';
 import { logActivity } from '../activity';
 import type { Env } from '../env';
 import { newId } from '../ids';
 import type { LlmClient } from '../llm/client';
 import { CallModel, type CallDoc } from '../models/call';
 import { SiteModel, VendorModel } from '../models/catalog';
+import { SettingsModel } from '../models/settings';
 import { WorkOrderModel } from '../models/workOrder';
 import { SITE_TIME_ZONE, URGENCY_WINDOW_HOURS } from '../pipeline/plan';
 import { COMPANY_NAME } from '../seed/data';
@@ -14,13 +23,25 @@ import { proposeNextVendor } from '../workflow/reassign';
 import { DialError, spokenDigits } from './dial';
 import { placeDemoCall, type CallProvider } from './provider';
 import { formatSpokenTime, localIsoToUtc, parseSpokenArrival } from './time';
-import { decideTurn, matchStopPhrase, type CallJob, type TurnModels } from './turn';
+import {
+  decideQuoteTurn,
+  finalizeQuote,
+  normalizeEstimate,
+  overNte,
+  spokenEstimate,
+} from './quote';
+import { decideTurn, matchStopPhrase, type CallJob, type ModelTurn, type TurnModels } from './turn';
 
-export const MAX_CALLS_PER_HOUR = 3;
+export const MAX_CALLS_PER_HOUR = 12;
+export const MAX_CALLS_PER_WORK_ORDER = 6;
 export const CALL_TIME_LIMIT_SEC = 180;
 export const RING_TIMEOUT_SEC = 25;
 /** Vendor utterances the model handles before the agent wraps up. */
 export const MAX_VENDOR_TURNS = 6;
+/** Quote calls ask more questions (estimate, arrival, read-back, limit). */
+export const MAX_QUOTE_TURNS = 9;
+/** A call still open this long after it was created has lost its final status callback. */
+export const STALE_CALL_MS = (CALL_TIME_LIMIT_SEC + RING_TIMEOUT_SEC + 120) * 1000;
 /** One voice for every line. https://www.twilio.com/docs/voice/twiml/say/text-speech */
 export const VOICE = 'Polly.Joanna-Neural';
 
@@ -28,9 +49,23 @@ export class CallError extends Error {
   constructor(
     message: string,
     readonly status: 400 | 401 | 403 | 404 | 409 | 429 | 502 | 503,
+    /** Lets the chain scheduler tell "try later" apart from "give up". */
+    readonly code?: 'busy' | 'hourly_cap' | 'work_order_cap',
   ) {
     super(message);
   }
+}
+
+export interface PlaceCallInput {
+  workOrderId: string;
+  vendorId: string;
+  purpose: CallPurpose;
+  chainId: string | null;
+  actor: 'manager' | 'system';
+  /** Fixed id for scheduler jobs, so running a job twice never places two calls. */
+  callId?: string;
+  /** Booking a quote winner: their quote, mentioned on the call and stored on confirm. */
+  bookingQuote?: QuoteResult | null;
 }
 
 /** Company name as spoken ("Harbor and Hearth Kitchen"). */
@@ -76,6 +111,22 @@ export function briefLines(job: CallJob, shortSite: string): string[] {
 
 export const BRIEF_QUESTION = "Can you take this job, and what's the earliest you can arrive?";
 
+/** Quote calls describe the job without the NTE; the limit only comes up if the price is over. */
+export function quoteBriefLines(job: CallJob, shortSite: string): string[] {
+  return [
+    `We're looking for a quote on work order ${spokenWorkOrder(job.workOrderNumber)}: ${firstWords(job.title, 10)}, at our ${shortSite} location, ${job.siteAddress}.`,
+    `It's ${URGENCY_WORD[job.urgency]}, needed ${job.window}.`,
+  ];
+}
+
+export const ESTIMATE_QUESTION =
+  'Can you give a rough estimate, or your call-out fee and hourly rate?';
+export const ARRIVAL_QUESTION = "What's the earliest you could arrive?";
+export const QUOTE_CLOSE = 'Thanks, our manager will confirm shortly by phone or email. Goodbye.';
+
+const shortAck = (say: string): string =>
+  say.trim().split(/\s+/).length <= 8 ? say : 'Great, thanks.';
+
 interface TurnPlan {
   says: string[];
   /** Asked inside <Gather>; null = no more input on this response. */
@@ -87,6 +138,8 @@ interface TurnPlan {
   reason?: string | null;
   eta?: Date | null;
   callbackAt?: Date | null;
+  /** Quote calls: the structured result, saved with the outcome. */
+  quote?: QuoteResult;
   set?: Partial<
     Pick<
       CallDoc,
@@ -96,11 +149,19 @@ interface TurnPlan {
       | 'briefRead'
       | 'pendingArrival'
       | 'pendingSpeech'
+      | 'quoteStage'
+      | 'stageTries'
+      | 'estimate'
+      | 'heardArrival'
+      | 'arrivalConfirmed'
+      | 'nteAsked'
+      | 'nteAnswer'
+      | 'quoteNotes'
     >
   >;
   model?: string | null;
   latencyMs?: number | null;
-  action?: CallAction | null;
+  action?: CallAction | QuoteTurnDecision['action'] | null;
 }
 
 type WebhookBody = Record<string, unknown>;
@@ -112,6 +173,10 @@ export interface CallServiceDeps {
   llm: LlmClient;
   models: TurnModels;
   now?: () => Date;
+  /** Chain hook: a chain call reached its final status (wired by the dispatch chain service). */
+  onChainCallEnded?: (call: CallDoc) => Promise<void>;
+  /** True when a call chain is working on this work order (blocks the manual Call button). */
+  chainActive?: (workOrderId: string) => Promise<boolean>;
 }
 
 /** Vendor dispatch phone call: Twilio <Say>/<Gather> turns, one Groq call per vendor reply. */
@@ -119,7 +184,7 @@ export class CallService {
   private readonly env: Env;
   private readonly now: () => Date;
 
-  constructor(private readonly deps: CallServiceDeps) {
+  constructor(readonly deps: CallServiceDeps) {
     this.env = deps.env;
     this.now = deps.now ?? (() => new Date());
   }
@@ -151,13 +216,36 @@ export class CallService {
     return `${this.env.PUBLIC_API_URL.replace(/\/+$/, '')}/api/twilio/voice/${callId}`;
   }
 
-  /** POST /api/work-orders/:id/call. Gated by CALLS_ENABLED + the admin key, 3 calls an hour. */
-  async start(workOrderId: string, adminKey: string | undefined): Promise<CallDoc> {
+  /** CALLS_ENABLED on, Twilio configured, and not in Advise mode (Advise disables all calls). */
+  async assertCallsAllowed(): Promise<void> {
     if (!this.env.CALLS_ENABLED) throw new CallError('Vendor calls are disabled', 403);
-    if (!this.checkAdminKey(adminKey)) throw new CallError('Admin key required', 401);
     if (!this.isConfigured() || !this.deps.provider) {
       throw new CallError('Vendor calls are not configured on this server', 503);
     }
+    const settings = await SettingsModel.findById('global').lean();
+    if (settings?.autonomyMode === 'advise') {
+      throw new CallError('Advise mode is on: vendor calls are disabled', 409);
+    }
+  }
+
+  /** True while any call is still on the line. Every call rings the same phone, so one at a time. */
+  async lineBusy(): Promise<boolean> {
+    return Boolean(
+      await CallModel.exists({
+        endedAt: null,
+        createdAt: { $gt: new Date(this.now().getTime() - STALE_CALL_MS) },
+      }),
+    );
+  }
+
+  /**
+   * POST /api/work-orders/:id/call: a one-off booking call to the assigned vendor. Gated by
+   * CALLS_ENABLED + the admin key and the call caps.
+   */
+  async start(workOrderId: string, adminKey: string | undefined): Promise<CallDoc> {
+    if (!this.env.CALLS_ENABLED) throw new CallError('Vendor calls are disabled', 403);
+    if (!this.checkAdminKey(adminKey)) throw new CallError('Admin key required', 401);
+    await this.assertCallsAllowed();
     const wo = await WorkOrderModel.findById(workOrderId).lean();
     if (!wo) throw new CallError('Work order not found', 404);
     if (wo.status !== 'dispatched' || !wo.vendorId) {
@@ -166,43 +254,111 @@ export class CallService {
         409,
       );
     }
-    const now = this.now();
-    const active = await CallModel.exists({
+    if (this.deps.chainActive && (await this.deps.chainActive(workOrderId))) {
+      throw new CallError('The agent is already working through vendors for this job', 409);
+    }
+    return this.place({
       workOrderId,
-      endedAt: null,
-      createdAt: { $gt: new Date(now.getTime() - (CALL_TIME_LIMIT_SEC + 120) * 1000) },
+      vendorId: wo.vendorId,
+      purpose: 'book',
+      chainId: null,
+      actor: 'manager',
     });
-    if (active) throw new CallError('A call for this work order is already in progress', 409);
-    const hourAgo = new Date(now.getTime() - 3600_000);
-    // Placements Twilio refused never rang, so they don't count toward the limit.
-    const recent = { createdAt: { $gt: hourAgo }, endedReason: { $ne: 'failed' } };
-    if ((await CallModel.countDocuments(recent)) >= MAX_CALLS_PER_HOUR) {
-      throw new CallError(`Call limit reached (${MAX_CALLS_PER_HOUR} per hour). Try later.`, 429);
+  }
+
+  /**
+   * Places one call. Shared by the manual Call button and the call-chain scheduler; the caller
+   * has already checked the admin key (chains are started by an admin). Enforces one call at a
+   * time, MAX_CALLS_PER_WORK_ORDER and MAX_CALLS_PER_HOUR. Placements Twilio refuses don't count.
+   */
+  async place(input: PlaceCallInput): Promise<CallDoc> {
+    if (!this.isConfigured() || !this.deps.provider) {
+      throw new CallError('Vendor calls are not configured on this server', 503);
+    }
+    const wo = await WorkOrderModel.findById(input.workOrderId).lean();
+    if (!wo) throw new CallError('Work order not found', 404);
+    if (
+      input.purpose === 'book' &&
+      (wo.status !== 'dispatched' || wo.vendorId !== input.vendorId)
+    ) {
+      throw new CallError(`${wo.number} is not dispatched to this vendor`, 409);
+    }
+    if (input.purpose === 'quote' && wo.status !== 'approved') {
+      throw new CallError(
+        `${wo.number} is ${wo.status}; quotes are only collected before dispatch`,
+        409,
+      );
+    }
+    if (input.callId) {
+      const existing = await CallModel.findById(input.callId).lean();
+      if (existing) return existing;
+    }
+    if (await this.lineBusy()) {
+      throw new CallError('Another call is in progress; calls run one at a time', 409, 'busy');
+    }
+    const now = this.now();
+    const counted = { endedReason: { $ne: 'failed' } };
+    const perWo = { ...counted, workOrderId: wo._id };
+    const perHour = { ...counted, createdAt: { $gt: new Date(now.getTime() - 3600_000) } };
+    if ((await CallModel.countDocuments(perWo)) >= MAX_CALLS_PER_WORK_ORDER) {
+      throw new CallError(
+        `Call limit reached for ${wo.number} (${MAX_CALLS_PER_WORK_ORDER} calls)`,
+        429,
+        'work_order_cap',
+      );
+    }
+    if ((await CallModel.countDocuments(perHour)) >= MAX_CALLS_PER_HOUR) {
+      throw new CallError(
+        `Call limit reached (${MAX_CALLS_PER_HOUR} per hour). Try later.`,
+        429,
+        'hourly_cap',
+      );
     }
     const [vendor, site] = await Promise.all([
-      VendorModel.findById(wo.vendorId).lean(),
+      VendorModel.findById(input.vendorId).lean(),
       SiteModel.findById(wo.siteId).lean(),
     ]);
     if (!vendor || !site) throw new CallError('Vendor or site not found', 409);
 
-    const id = newId('call');
-    await CallModel.create({
-      _id: id,
-      callSid: null,
-      workOrderId,
-      workOrderNumber: wo.number,
-      workOrderTitle: wo.title,
-      vendorId: vendor._id,
-      vendorName: vendor.name,
-      siteName: site.name,
-      status: 'queued',
-      createdAt: now,
-      updatedAt: now,
-    });
-    // Two concurrent starts can both pass the count above; re-count with ours included.
-    if ((await CallModel.countDocuments(recent)) > MAX_CALLS_PER_HOUR) {
+    const id = input.callId ?? newId('call');
+    const quotedArrival = input.bookingQuote?.earliestArrival
+      ? new Date(input.bookingQuote.earliestArrival)
+      : null;
+    try {
+      await CallModel.create({
+        _id: id,
+        callSid: null,
+        workOrderId: wo._id,
+        workOrderNumber: wo.number,
+        workOrderTitle: wo.title,
+        vendorId: vendor._id,
+        vendorName: vendor.name,
+        siteName: site.name,
+        purpose: input.purpose,
+        chainId: input.chainId,
+        bookingQuote: input.bookingQuote ?? null,
+        // A quoted arrival is read back in the brief, so a plain "yes" can confirm it.
+        pendingArrival: quotedArrival && quotedArrival > now ? quotedArrival : null,
+        status: 'queued',
+        createdAt: now,
+        updatedAt: now,
+      });
+    } catch (err) {
+      if ((err as { code?: number }).code === 11000) return (await CallModel.findById(id).lean())!;
+      throw err;
+    }
+    // Two concurrent starts can both pass the checks above; re-check with ours included.
+    const raced =
+      (await CallModel.countDocuments({
+        _id: { $ne: id },
+        endedAt: null,
+        createdAt: { $gt: new Date(now.getTime() - STALE_CALL_MS) },
+      })) > 0 ||
+      (await CallModel.countDocuments(perHour)) > MAX_CALLS_PER_HOUR ||
+      (await CallModel.countDocuments(perWo)) > MAX_CALLS_PER_WORK_ORDER;
+    if (raced) {
       await CallModel.deleteOne({ _id: id });
-      throw new CallError(`Call limit reached (${MAX_CALLS_PER_HOUR} per hour). Try later.`, 429);
+      throw new CallError('Another call started at the same moment; try again', 409, 'busy');
     }
 
     try {
@@ -231,6 +387,7 @@ export class CallService {
         },
       );
       await this.applyOutcome(id);
+      await this.callEnded(id);
       throw new CallError(
         err instanceof DialError ? msg : 'Twilio could not place the call; email fallback used',
         502,
@@ -238,12 +395,68 @@ export class CallService {
     }
     await logActivity({
       step: 'call',
-      actor: 'manager',
-      workOrderId,
+      actor: input.actor,
+      workOrderId: wo._id,
       inputSummary: `Call ${vendor.name} about ${wo.number}`,
-      outputSummary: 'Dispatch call started (demo number only)',
+      outputSummary:
+        input.purpose === 'quote'
+          ? 'Quote call started (demo number only)'
+          : input.bookingQuote
+            ? 'Booking call to the picked vendor started (demo number only)'
+            : 'Dispatch call started (demo number only)',
     });
     return (await CallModel.findById(id).lean())!;
+  }
+
+  /**
+   * Runs the chain hook once per call after it reaches a final status, so the next call in a
+   * chain never starts while this one is still on the line.
+   */
+  async callEnded(callId: string): Promise<void> {
+    const call = await CallModel.findOneAndUpdate(
+      { _id: callId, endedAt: { $ne: null }, chainNotifiedAt: null },
+      { chainNotifiedAt: this.now() },
+      { new: true },
+    ).lean();
+    if (!call || !call.chainId || !this.deps.onChainCallEnded) return;
+    try {
+      await this.deps.onChainCallEnded(call);
+    } catch (err) {
+      await CallModel.updateOne({ _id: callId }, { chainNotifiedAt: null });
+      throw err;
+    }
+  }
+
+  /**
+   * Ends calls that never got a final status callback (lost webhook, server restart), so the
+   * line frees up and their chains move on.
+   */
+  async sweepStaleCalls(): Promise<number> {
+    const cutoff = new Date(this.now().getTime() - STALE_CALL_MS);
+    const stale = await CallModel.find({ endedAt: null, createdAt: { $lte: cutoff } }).lean();
+    for (const c of stale) {
+      const now = this.now();
+      await CallModel.updateOne(
+        { _id: c._id, endedAt: null },
+        { status: 'ended', endedReason: 'no final status', endedAt: now, updatedAt: now },
+      );
+      await CallModel.updateOne(
+        { _id: c._id, outcome: null },
+        { outcome: 'email_fallback', reason: 'No final status from Twilio', updatedAt: now },
+      );
+      await this.applyOutcome(c._id);
+      await this.callEnded(c._id);
+    }
+    // Calls whose hook failed earlier get another try.
+    const missed = await CallModel.find({
+      endedAt: { $ne: null },
+      chainId: { $ne: null },
+      chainNotifiedAt: null,
+    })
+      .limit(20)
+      .lean();
+    for (const c of missed) await this.callEnded(c._id);
+    return stale.length;
   }
 
   private render(callId: string, n: number, plan: TurnPlan): string {
@@ -259,7 +472,11 @@ export class CallService {
         speechTimeout: 'auto',
         timeout: 6,
         language: 'en-US',
-        hints: 'yes, no, today, tomorrow, morning, afternoon, a.m., p.m., stop, call back',
+        hints:
+          'yes, no, today, tomorrow, morning, afternoon, a.m., p.m., stop, call back, dollars, hundred, call-out fee, hourly rate, an hour',
+        // Twilio's phone-call model is better with numbers than the default one.
+        speechModel: 'phone_call',
+        enhanced: true,
         actionOnEmptyResult: true,
       });
       g.say(say, plan.question);
@@ -336,7 +553,7 @@ export class CallService {
       ? (call.pendingSpeech ?? '')
       : (stringOrNull(body.SpeechResult) ?? '').trim();
     const confidence = retry ? null : numberOrNull(body.Confidence);
-    const plan = await this.plan(call, speech, retry, now);
+    const plan = await this.plan(call, speech, retry, now, confidence);
     const xml = this.render(callId, n, plan);
 
     const lines: CallDoc['transcript'] = [];
@@ -374,6 +591,7 @@ export class CallService {
       set.reason = plan.reason ?? null;
       if (plan.eta !== undefined) set.eta = plan.eta;
       if (plan.callbackAt !== undefined) set.callbackAt = plan.callbackAt;
+      if (plan.quote) set.quote = plan.quote;
     }
     const res = await CallModel.updateOne(
       { _id: callId, seq: n - 1, outcome: null },
@@ -391,7 +609,13 @@ export class CallService {
     return xml;
   }
 
-  private async plan(call: CallDoc, speech: string, retry: boolean, now: Date): Promise<TurnPlan> {
+  private async plan(
+    call: CallDoc,
+    speech: string,
+    retry: boolean,
+    now: Date,
+    confidence: number | null,
+  ): Promise<TurnPlan> {
     const goodbye = (says: string[], outcome: CallOutcome, reason: string | null): TurnPlan => ({
       says,
       question: null,
@@ -434,17 +658,8 @@ export class CallService {
     }
 
     const job = await this.jobFor(call);
-    let turn;
-    try {
-      turn = await decideTurn(this.deps.llm, this.deps.models, {
-        job: job.job,
-        transcript: call.transcript.map((t) => ({ speaker: t.speaker, text: t.text })),
-        vendorSaid: speech,
-        briefRead: call.briefRead,
-        pendingArrival: call.pendingArrival,
-        now,
-      });
-    } catch (err) {
+    const transcript = call.transcript.map((t) => ({ speaker: t.speaker, text: t.text }));
+    const modelDown = (err: unknown): TurnPlan => {
       const msg = err instanceof Error ? err.message : String(err);
       if (call.llmFailures === 0 && !retry) {
         return {
@@ -459,6 +674,37 @@ export class CallService {
         'email_fallback',
         `Model unavailable: ${msg}`.slice(0, 300),
       );
+    };
+
+    if (call.purpose === 'quote') {
+      let qt: ModelTurn<QuoteTurnDecision>;
+      try {
+        qt = await decideQuoteTurn(this.deps.llm, this.deps.models, {
+          job: job.job,
+          transcript,
+          vendorSaid: speech,
+          stage: call.quoteStage,
+          pendingArrival: call.pendingArrival,
+          now,
+        });
+      } catch (err) {
+        return modelDown(err);
+      }
+      return this.planQuote(call, speech, confidence, qt, job, now, goodbye);
+    }
+
+    let turn;
+    try {
+      turn = await decideTurn(this.deps.llm, this.deps.models, {
+        job: job.job,
+        transcript,
+        vendorSaid: speech,
+        briefRead: call.briefRead,
+        pendingArrival: call.pendingArrival,
+        now,
+      });
+    } catch (err) {
+      return modelDown(err);
     }
 
     const d = turn.decision;
@@ -516,8 +762,7 @@ export class CallService {
           plan = readBack(arrival);
         } else if (!call.briefRead) {
           plan = {
-            says: [d.say, ...briefLines(job.job, job.shortSite)],
-            question: BRIEF_QUESTION,
+            ...this.bookBrief(call, job, d.say, now),
             set: { ...base, briefRead: true },
             ...meta,
           };
@@ -556,6 +801,183 @@ export class CallService {
         ...meta,
         action: 'end',
       };
+    }
+    return plan;
+  }
+
+  /** Booking call brief. A quote winner hears their quote and arrival time back. */
+  private bookBrief(
+    call: CallDoc,
+    job: { job: CallJob; shortSite: string },
+    ack: string,
+    now: Date,
+  ): { says: string[]; question: string } {
+    const says = [ack, ...briefLines(job.job, job.shortSite)];
+    const q = call.bookingQuote;
+    if (!q) return { says, question: BRIEF_QUESTION };
+    const est = spokenEstimate(q);
+    says.push(`We'd like to book you.${est ? ` You quoted ${est}, approximately.` : ''}`);
+    const at = call.pendingArrival;
+    return {
+      says,
+      question: at ? `Can you confirm you'll arrive ${formatSpokenTime(at, now)}?` : BRIEF_QUESTION,
+    };
+  }
+
+  /**
+   * Quote call: the code asks the questions in order (company, estimate, arrival with a
+   * read-back, then the limit question once if the estimate is over the NTE) and the model
+   * extracts answers. Never books; closes with "our manager will confirm shortly".
+   */
+  private planQuote(
+    call: CallDoc,
+    speech: string,
+    confidence: number | null,
+    turn: ModelTurn<QuoteTurnDecision>,
+    job: { job: CallJob; shortSite: string },
+    now: Date,
+    goodbye: (says: string[], outcome: CallOutcome, reason: string | null) => TurnPlan,
+  ): TurnPlan {
+    const d = turn.decision;
+    const meta = { model: turn.model, latencyMs: turn.latencyMs, action: d.action };
+    const vendorTurns = call.vendorTurns + 1;
+    const set: NonNullable<TurnPlan['set']> = { vendorTurns, pendingSpeech: null };
+    const stated = d.estimate ? normalizeEstimate(d.estimate) : null;
+    if (stated) set.estimate = stated;
+    if (d.notes) set.quoteNotes = [...call.quoteNotes, d.notes];
+    const arrival = validArrival(
+      parseSpokenArrival(speech, now) ?? (d.arrivalTime ? localIsoToUtc(d.arrivalTime) : null),
+      now,
+    );
+    const nte = job.job.nte;
+    const confidences = [
+      ...call.transcript.filter((t) => t.speaker === 'vendor').map((t) => t.confidence),
+      confidence,
+    ].filter((c): c is number => c !== null);
+
+    const result = (): QuoteResult =>
+      finalizeQuote({
+        estimate: set.estimate ?? call.estimate,
+        earliestArrival:
+          set.arrivalConfirmed !== undefined ? set.arrivalConfirmed : call.arrivalConfirmed,
+        nte,
+        nteAsked: set.nteAsked ?? call.nteAsked,
+        nteAnswer: set.nteAnswer !== undefined ? set.nteAnswer : call.nteAnswer,
+        notes: set.quoteNotes ?? call.quoteNotes,
+        confidences,
+      });
+    const hasInfo = (): boolean =>
+      Boolean(set.estimate ?? call.estimate ?? set.arrivalConfirmed ?? call.arrivalConfirmed);
+    const finish = (says: string[] = [QUOTE_CLOSE]): TurnPlan => ({
+      ...goodbye(says, 'quoted', null),
+      quote: result(),
+      set,
+      ...meta,
+    });
+    const ask = (question: string, extra: NonNullable<TurnPlan['set']> = {}): TurnPlan => ({
+      says: [],
+      question,
+      set: { ...set, ...extra },
+      ...meta,
+    });
+    const readBack = (at: Date): TurnPlan =>
+      ask(`Just to confirm, you could arrive ${formatSpokenTime(at, now)}. Is that right?`, {
+        quoteStage: 'arrival',
+        stageTries: 0,
+        pendingArrival: at,
+      });
+    const askArrival = (): TurnPlan => {
+      const heard = arrival ?? call.heardArrival;
+      return heard
+        ? readBack(heard)
+        : ask(ARRIVAL_QUESTION, { quoteStage: 'arrival', stageTries: 0 });
+    };
+    const afterArrival = (confirmed: Date | null): TurnPlan => {
+      set.arrivalConfirmed = confirmed;
+      if (!call.nteAsked && overNte(set.estimate ?? call.estimate, nte)) {
+        return ask(`Our limit for this job is ${nte} dollars. Could you work within that?`, {
+          quoteStage: 'limit',
+          stageTries: 0,
+          nteAsked: true,
+        });
+      }
+      return finish();
+    };
+
+    switch (d.action) {
+      case 'decline_job':
+        return { ...goodbye([d.say], 'declined', d.reason ?? speech.slice(0, 200)), set, ...meta };
+      case 'request_callback':
+        return {
+          ...goodbye([d.say], 'callback_requested', d.reason ?? speech.slice(0, 200)),
+          callbackAt: arrival,
+          set,
+          ...meta,
+        };
+      case 'end':
+        return hasInfo()
+          ? finish([d.say])
+          : { ...goodbye([d.say], 'ended', d.reason), set, ...meta };
+    }
+
+    let plan: TurnPlan;
+    switch (call.quoteStage) {
+      case 'identity':
+        if (arrival) set.heardArrival = arrival;
+        plan = {
+          says: [shortAck(d.say), ...quoteBriefLines(job.job, job.shortSite)],
+          question: ESTIMATE_QUESTION,
+          set: { ...set, briefRead: true, quoteStage: 'estimate', stageTries: 0 },
+          ...meta,
+        };
+        break;
+      case 'estimate':
+        if (arrival) set.heardArrival = arrival;
+        if (stated) {
+          plan = askArrival();
+        } else if (call.stageTries >= 1) {
+          // Two unclear answers: record "no estimate" and move on.
+          set.estimate = call.estimate ?? normalizeEstimate({ quoteType: 'none' })!;
+          plan = askArrival();
+        } else {
+          plan = ask(d.say, { stageTries: call.stageTries + 1 });
+        }
+        break;
+      case 'arrival':
+        if (arrival && !(call.pendingArrival && sameMinute(arrival, call.pendingArrival))) {
+          plan = readBack(arrival);
+        } else if (call.pendingArrival && d.action === 'agree') {
+          plan = afterArrival(call.pendingArrival);
+        } else if (call.stageTries >= 1) {
+          plan = afterArrival(null);
+        } else {
+          plan = ask(d.say, { stageTries: call.stageTries + 1 });
+        }
+        break;
+      case 'limit': {
+        const answer = d.withinNte ?? (d.action === 'agree' ? 'yes' : null);
+        if (answer || call.stageTries >= 1) {
+          set.nteAnswer = answer;
+          plan = finish();
+        } else {
+          plan = ask(d.say, { stageTries: call.stageTries + 1 });
+        }
+        break;
+      }
+    }
+
+    if (!plan.hangup && vendorTurns >= MAX_QUOTE_TURNS) {
+      plan = hasInfo()
+        ? finish()
+        : {
+            ...goodbye(
+              ['Thanks for your time. Our manager will follow up by email. Goodbye.'],
+              'ended',
+              'Turn limit reached without a quote',
+            ),
+            set,
+            ...meta,
+          };
     }
     return plan;
   }
@@ -632,6 +1054,7 @@ export class CallService {
       { outcome: 'email_fallback', reason: reason[tw] ?? tw, updatedAt: now },
     );
     await this.applyOutcome(callId);
+    await this.callEnded(callId);
   }
 
   /** Work order, proposal and Activity Log effects of an outcome. Runs once per call. */
@@ -650,14 +1073,23 @@ export class CallService {
       if (call.outcome === 'confirmed' && call.eta) {
         const res = await WorkOrderModel.updateOne(
           { _id: call.workOrderId, status: 'dispatched', vendorId: call.vendorId },
-          { status: 'accepted', eta: call.eta, updatedAt: now },
+          {
+            status: 'accepted',
+            eta: call.eta,
+            ...(call.bookingQuote ? { agreedQuote: call.bookingQuote } : {}),
+            updatedAt: now,
+          },
         );
         output =
           res.modifiedCount === 1
-            ? `Status dispatched → accepted. ${summary}`
+            ? `Status dispatched → accepted${call.bookingQuote ? `; agreed estimate ${formatEstimate(call.bookingQuote)} (approximate) stored` : ''}. ${summary}`
             : `Work order was no longer dispatched to this vendor; nothing changed. ${summary}`;
-      } else if (call.outcome === 'declined') {
+      } else if (call.outcome === 'declined' && !call.chainId) {
         reassignProposalId = await proposeNextVendor(call, now);
+      } else if (call.chainId && call.outcome !== 'quoted') {
+        output = `${summary} The call chain takes the next step once the call ends.`;
+      } else if (call.outcome === 'quoted') {
+        output = summary;
       } else if (call.outcome !== 'callback_requested') {
         output = `Email fallback used: the dispatch email draft is the record. ${summary}`;
       }
@@ -695,10 +1127,13 @@ const etaText = (d: Date): string =>
 
 /** One-line transcript summary for the Activity Log and the work order panel. */
 export function summarize(
-  call: Pick<CallDoc, 'outcome' | 'eta' | 'callbackAt' | 'reason' | 'transcript'>,
+  call: Pick<CallDoc, 'outcome' | 'eta' | 'callbackAt' | 'reason' | 'transcript'> & {
+    quote?: QuoteResult | null;
+  },
 ): string {
   const head: Record<CallOutcome, string> = {
     confirmed: `Vendor confirmed; arriving ${call.eta ? etaText(call.eta) : 'at an unknown time'}.`,
+    quoted: quoteHeadline(call.quote ?? null),
     declined: `Vendor declined${call.reason ? `: ${call.reason}` : ''}.`,
     callback_requested: `Vendor asked for a callback${call.callbackAt ? ` ${etaText(call.callbackAt)}` : ''}${call.reason ? `: ${call.reason}` : ''}.`,
     opted_out: 'Vendor asked not to be called; call ended.',
@@ -713,6 +1148,27 @@ export function summarize(
   ]
     .filter(Boolean)
     .join(' ');
+}
+
+const LIMIT_ANSWER: Record<QuoteResult['withinNte'], string> = {
+  yes: 'within the limit',
+  no: 'can’t work within the limit',
+  maybe: 'maybe within the limit',
+  unknown: 'limit not discussed',
+};
+
+function quoteHeadline(q: QuoteResult | null): string {
+  if (!q) return 'Quote call ended.';
+  const ceiling = estimateCeiling(q);
+  return [
+    `Quote ${formatEstimate(q)}${ceiling !== null ? ' (approximate)' : ''}`,
+    LIMIT_ANSWER[q.withinNte],
+    q.earliestArrival
+      ? `earliest arrival ${etaText(new Date(q.earliestArrival))}`
+      : 'no arrival time',
+  ]
+    .join('; ')
+    .concat(q.notes ? `. Notes: ${q.notes}.` : '.');
 }
 
 const hangupTwiml = (): string => {

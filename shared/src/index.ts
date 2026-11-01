@@ -8,3 +8,4 @@ export * from './api';
 export * from './catalog';
 export * from './safety';
 export * from './call';
+export * from './dispatch';

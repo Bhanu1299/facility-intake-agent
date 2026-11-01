@@ -1,79 +1,26 @@
 import request from 'supertest';
 import twilio from 'twilio';
-import type { CallTurnDecision } from '@fia/shared';
 import { createApp } from '../app';
-import { loadEnv } from '../env';
-import { LlmError, type LlmClient, type LlmRequest, type LlmResult } from '../llm/client';
+import { LlmError, type LlmClient } from '../llm/client';
 import { CallModel } from '../models/call';
 import { VendorModel } from '../models/catalog';
 import { ActivityModel, ProposalModel } from '../models/pipeline';
 import { WorkOrderModel } from '../models/workOrder';
 import { resetDemoData } from '../seed/reset';
+import {
+  ADMIN,
+  DEMO_PHONE,
+  FakeProvider,
+  PUBLIC,
+  ScriptedLlm,
+  TOKEN,
+  callEnv,
+} from '../test/calls';
 import { useTestDb } from '../test/db';
 import { dialTarget, DialError, spokenDigits } from './dial';
-import { placeDemoCall, TwilioCallProvider, type CallProvider } from './provider';
+import { placeDemoCall, TwilioCallProvider } from './provider';
 import type { CallService } from './service';
 import { matchStopPhrase } from './turn';
-
-const PUBLIC = 'https://api.example.test';
-const TOKEN = 'test-auth-token';
-const ADMIN = 'admin-key-123';
-const DEMO_PHONE = '+17165550199';
-
-const callEnv = (overrides: Record<string, string> = {}) =>
-  loadEnv({
-    NODE_ENV: 'test',
-    DEMO_RATE_LIMIT_PER_HOUR: '1000',
-    TWILIO_ACCOUNT_SID: 'ACtest',
-    TWILIO_AUTH_TOKEN: TOKEN,
-    TWILIO_FROM_NUMBER: '+17165550100',
-    DEMO_VENDOR_PHONE: DEMO_PHONE,
-    CALL_ADMIN_KEY: ADMIN,
-    CALLS_ENABLED: 'true',
-    PUBLIC_API_URL: PUBLIC,
-    ...overrides,
-  });
-
-/** Records every Calls.create; never talks to Twilio. */
-class FakeProvider implements CallProvider {
-  readonly created: Parameters<CallProvider['create']>[0][] = [];
-  private n = 0;
-  async create(p: Parameters<CallProvider['create']>[0]): Promise<{ sid: string }> {
-    this.created.push(p);
-    return { sid: `CA${String(++this.n).padStart(32, '0')}` };
-  }
-  readonly hungUp: string[] = [];
-  async hangup(sid: string): Promise<void> {
-    this.hungUp.push(sid);
-  }
-}
-
-type Scripted = Partial<CallTurnDecision> | Error;
-
-/** Scripted call-turn model: hands out decisions in order and records what it was asked. */
-class ScriptedLlm implements LlmClient {
-  readonly calls: LlmRequest<unknown>[] = [];
-  constructor(private readonly script: Scripted[]) {}
-  async complete<T>(req: LlmRequest<T>): Promise<LlmResult<T>> {
-    this.calls.push(req as LlmRequest<unknown>);
-    const next = this.script.shift();
-    if (!next) throw new Error('ScriptedLlm ran out of turns');
-    if (next instanceof Error) throw next;
-    const data = req.schema.parse({
-      say: 'Okay.',
-      action: 'continue',
-      arrivalTime: null,
-      reason: null,
-      ...next,
-    });
-    return {
-      data,
-      model: req.model,
-      usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
-      latencyMs: 3,
-    };
-  }
-}
 
 describe('vendor dispatch call', () => {
   useTestDb();
@@ -193,9 +140,9 @@ describe('vendor dispatch call', () => {
       expect(provider.created).toHaveLength(0);
     });
 
-    it('allows at most 3 calls per hour', async () => {
+    it('allows at most 6 calls per work order', async () => {
       const app = makeApp();
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < 6; i++) {
         const { id, sid } = await startCall(app);
         await signed(app, `/api/twilio/voice/${id}/status`, {
           CallSid: sid,
@@ -203,11 +150,46 @@ describe('vendor dispatch call', () => {
         });
         // A no-answer leaves the work order dispatched, so it can be called again.
       }
-      await request(app)
+      const res = await request(app)
         .post(`/api/work-orders/${woId}/call`)
         .set('X-Admin-Key', ADMIN)
         .expect(429);
-      expect(provider.created).toHaveLength(3);
+      expect(res.body.error).toContain('6 calls');
+      expect(provider.created).toHaveLength(6);
+    });
+
+    it('allows at most 12 calls an hour across all work orders', async () => {
+      const app = makeApp();
+      const dispatched = await WorkOrderModel.find({ status: 'dispatched' }).lean();
+      expect(dispatched.length).toBeGreaterThanOrEqual(3);
+      const callWo = async (id: string, expect: number) =>
+        request(app).post(`/api/work-orders/${id}/call`).set('X-Admin-Key', ADMIN).expect(expect);
+      for (const wo of dispatched.slice(0, 2)) {
+        for (let i = 0; i < 6; i++) {
+          const res = await callWo(wo._id, 202);
+          await signed(app, `/api/twilio/voice/${res.body.id}/status`, {
+            CallSid: res.body.callSid,
+            CallStatus: 'busy',
+          });
+        }
+      }
+      const res = await callWo(dispatched[2]!._id, 429);
+      expect(res.body.error).toContain('12 per hour');
+      expect(provider.created).toHaveLength(12);
+    });
+
+    it('only one call at a time, on any work order', async () => {
+      const app = makeApp();
+      await startCall(app);
+      const other = (await WorkOrderModel.findOne({
+        status: 'dispatched',
+        _id: { $ne: woId },
+      }).lean())!;
+      const res = await request(app)
+        .post(`/api/work-orders/${other._id}/call`)
+        .set('X-Admin-Key', ADMIN)
+        .expect(409);
+      expect(res.body.error).toContain('one at a time');
     });
 
     it('placements Twilio refuses never count toward the hourly limit', async () => {

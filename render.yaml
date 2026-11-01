@@ -51,3 +51,7 @@ services:
         sync: false
       - key: PUBLIC_API_URL
         sync: false
+      - key: DEMO_RETRY_MINUTES
+        sync: false
+      - key: JOBS_SECRET
+        generateValue: true

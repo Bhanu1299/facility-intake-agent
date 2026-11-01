@@ -1,15 +1,19 @@
 import { Router, type Response } from 'express';
 import {
+  ApproveProposalInput,
   ProposalStatus,
   RejectProposalInput,
   WorkOrderDraftPatch,
   compareForInbox,
 } from '@fia/shared';
+import { CallError, type CallService } from '../calls/service';
+import type { ChainService } from '../dispatch/chain';
+import { toChainRecord } from '../dispatch/models';
 import { ActivityModel, ProposalModel } from '../models/pipeline';
 import { ApprovalError, approveProposal, editProposal, rejectProposal } from '../workflow/approval';
 
 function sendError(res: Response, err: unknown): void {
-  if (err instanceof ApprovalError) {
+  if (err instanceof ApprovalError || err instanceof CallError) {
     res.status(err.status).json({ error: err.message });
     return;
   }
@@ -22,7 +26,7 @@ const toJson = <T extends { _id: string }>(doc: T): Omit<T, '_id'> & { id: strin
   return { id: _id, ...rest };
 };
 
-export function proposalsRouter(): Router {
+export function proposalsRouter(calls: CallService, chains: ChainService): Router {
   const router = Router();
 
   router.get('/proposals', async (req, res) => {
@@ -55,18 +59,46 @@ export function proposalsRouter(): Router {
   });
 
   router.post('/proposals/:id/approve', async (req, res) => {
-    const body: unknown = req.body ?? {};
-    const patch = WorkOrderDraftPatch.safeParse(body);
-    if (!patch.success) {
-      res.status(400).json({ error: 'Invalid edit', details: patch.error.issues });
+    const body = ApproveProposalInput.safeParse(req.body ?? {});
+    if (!body.success) {
+      res.status(400).json({ error: 'Invalid edit', details: body.error.issues });
       return;
     }
+    const { callPlan, ...patch } = body.data;
     try {
-      const result = await approveProposal(req.params.id, patch.data);
+      // A call plan starts calls, so it needs the admin key; without one, approval dispatches
+      // by email as before.
+      if (callPlan) {
+        if (!calls.checkAdminKey(req.header('x-admin-key'))) {
+          res.status(401).json({ error: 'Admin key required to start vendor calls' });
+          return;
+        }
+        await calls.assertCallsAllowed();
+        const p = await ProposalModel.findById(req.params.id).lean();
+        if (p && p.action !== 'create') {
+          res.status(400).json({ error: 'Call plans apply to new work orders only' });
+          return;
+        }
+      }
+      const result = await approveProposal(req.params.id, patch, {
+        dispatch: callPlan ? callPlan.mode === 'book' : true,
+      });
+      let chain = null;
+      if (callPlan && result.created) {
+        chain = await chains.start(
+          result.workOrder._id,
+          callPlan,
+          result.proposal.vendors,
+          result.proposal.draft.vendorId!,
+        );
+      } else if (result.created) {
+        await chains.afterApproval(result.proposal, result.workOrder);
+      }
       res.status(result.created ? 201 : 200).json({
         proposal: toJson(result.proposal),
         workOrder: toJson(result.workOrder),
         created: result.created,
+        chain: chain ? toChainRecord(chain, null) : null,
       });
     } catch (err) {
       sendError(res, err);
@@ -80,7 +112,9 @@ export function proposalsRouter(): Router {
       return;
     }
     try {
-      res.json(toJson(await rejectProposal(req.params.id, body.data.reason)));
+      const rejected = await rejectProposal(req.params.id, body.data.reason);
+      await chains.afterRejection(rejected);
+      res.json(toJson(rejected));
     } catch (err) {
       sendError(res, err);
     }

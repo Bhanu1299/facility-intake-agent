@@ -162,62 +162,96 @@ What tuning showed (four full runs, tune set only):
 
 ## Vendor call (optional)
 
-After a manager approves a work order, an admin can have an AI voice agent phone the vendor to
-confirm the job and an arrival time. The drafted dispatch email stays as the fallback and the
-record.
+After a manager approves a work order, an AI voice agent can phone vendors: to collect rough
+quotes, or to book the job and an arrival time. Drafted emails stay as the fallback and the record.
+Starting calls needs the admin key; without it, approval dispatches by email as before.
+
+**Three call modes**
+
+| Mode                             | Default for          | What the agent does                                                                                                                                                                     |
+| -------------------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Quote**                        | routine, low, urgent | Calls the top 2 vendors, one at a time, for a rough estimate and earliest arrival. Never books. A "Quotes ready" proposal shows them side by side; the manager picks (no auto-pick)     |
+| **Book**                         | emergency            | Calls vendor #1 to book now. With "auto-call backup vendors" ticked, a miss or decline moves straight to #2, then #3                                                                    |
+| **Confirm** (booking the winner) | after a Quote pick   | The booking call above, mentioning the vendor's quote and arrival time. On a yes: work order accepted with the ETA and the agreed estimate; the other vendor gets a decline email draft |
+
+The manager picks the mode when approving (defaulted from urgency). Advise mode disables all calls.
+
+**Quote calls.** Same disclosure and stop handling as booking calls. The agent confirms the company,
+describes the job (site, problem, urgency, needed-by window), asks "Can you give a rough estimate,
+or your call-out fee and hourly rate?", then the earliest arrival (read back for a yes). It accepts
+a fixed price, a range, rates, or no estimate. If the estimate (or the call-out fee plus 2 hours at
+the hourly rate) is above the NTE, it asks once: "Our limit for this job is $N. Could you work
+within that?" and records yes, no or maybe. It never negotiates further and never mentions other
+vendors or their prices. It closes with "our manager will confirm shortly by phone or email". Each
+call produces a strict-schema result (`quoteType`, amounts, `withinNte`, `earliestArrival`,
+`notes`, `confidence`). **Estimates are approximate** and labeled that way everywhere.
+
+**Fallbacks**
+
+| Situation                    | Routine / low                                                                                                                        | Urgent                                    | Emergency (Book mode)                                                    |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------- | ------------------------------------------------------------------------ |
+| Quote call missed            | Request-for-quote email draft, one retry after `DEMO_RETRY_MINUTES`; the next vendor is called meanwhile. Retry missed → next vendor | Next vendor at once                       | n/a                                                                      |
+| Booking call missed          | One retry after the delay, then the runner-up as a one-click proposal                                                                | Runner-up as a one-click proposal at once | Auto-backup on: call #2 at once, then #3. Off: propose the next vendor   |
+| Vendor declines or says stop | Next vendor (quotes) or runner-up proposal (booking)                                                                                 | Same                                      | Auto-backup on: next vendor at once. Off: the existing reassign proposal |
+| Manager rejects all quotes   | Quote call to the next unused vendor                                                                                                 | Same                                      | n/a                                                                      |
+| Every vendor tried           | Needs a human: "No vendor reached", red banner at the top of Inbox                                                                   | Same                                      | Same                                                                     |
+
+Every step (call started, outcome, quote captured, retry scheduled, chain advanced, manager pick,
+email drafted) is written to the Activity Log.
+
+**Scheduling.** Every call goes to the same demo phone, so calls are strictly sequential: the next
+one is scheduled when the previous call reaches a final status, and the scheduler never dials while
+a call is on the line. Scheduled calls live in a Mongo collection (`scheduledCalls`), not in-memory
+timers, and run from `POST /api/jobs/run-due` (header `X-Jobs-Secret`), on server start and every 2
+minutes while the server is awake. Production would hit that route from an external cron. On
+Render's free tier a sleeping server runs overdue jobs when it wakes.
 
 **How the loop works.** The server places an outbound call with Twilio Programmable Voice
 (`Calls.create`) and runs its own turn loop. Each turn is TwiML `<Say>` followed by
-`<Gather input="speech">`. Twilio posts what the vendor said (`SpeechResult`) to a webhook, and the
-server asks the Groq small model for one strict-schema decision: what to say next and an action
-(`continue`, `confirm_job`, `decline_job`, `request_callback` or `end`). The big model runs only if
-the small model's output fails validation. Call turns use their own client with no retries, a 5 s
-timeout and a token cap. If the model is slow the agent says "Sorry, one moment" and tries once
-more, then ends with "we'll follow up by email". Code, not the model, handles these parts:
+`<Gather input="speech">` (Twilio's phone-call speech model). Twilio posts what the vendor said
+(`SpeechResult`) to a webhook, and the server asks the Groq small model for one strict-schema
+decision. The big model runs only if the small model's output fails validation. Call turns use their
+own client with no retries, a 5 s timeout and a token cap. If the model is slow the agent says
+"Sorry, one moment" and tries once more, then ends with "we'll follow up by email". Code, not the
+model, handles these parts:
 
 - **Stop phrases.** "Stop", "not interested", "wrong number", "remove me", "don't call" and "no
   thanks" end the call before the model sees the turn.
 - **Arrival times.** "Tomorrow at 9" and "in two hours" are resolved in the site's time zone
-  (America/New_York). The agent reads the time back, and the job is only confirmed after a yes.
-- **Limits.** Six vendor turns at most. With no speech the agent asks again once, then ends.
-
-**What happens after the call**
-
-| Outcome                                   | Effect                                                                                        |
-| ----------------------------------------- | --------------------------------------------------------------------------------------------- |
-| Confirmed                                 | Work order `dispatched → accepted` with the ETA; Activity Log entry with a transcript summary |
-| Declined                                  | Back to `approved` (budget commitment kept) and a new proposal for the next vendor to approve |
-| Callback requested                        | Time and reason stored; work order stays `dispatched`                                         |
-| No answer, busy, failed, silence, stopped | "Email fallback used": the drafted dispatch email is the record                               |
+  (America/New_York). The agent reads the time back, and a booking is only confirmed after a yes.
+- **The order of questions** on a quote call, and the one-time limit question.
+- **Limits.** Six vendor turns on a booking call, nine on a quote call. With no speech the agent
+  asks again once, then ends.
 
 **Disclosure.** Every call opens with: "Hi, this is an automated assistant calling on behalf of
 Harbor and Hearth Kitchen about a maintenance job. Our callback number is <number, digit by
 digit>. Say stop at any time to end the call."
 
-**Demo safety.** The app only ever dials `DEMO_VENDOR_PHONE`, the author's own verified number,
-from a shared Twilio trial number. The seeded vendor phone numbers are fake and are never dialed;
-one function picks the number and a test checks it. Calls need `CALLS_ENABLED=true` on the server
-_and_ the admin key (entered under Settings, kept in session storage). Visitors without the key
-see the most recent stored call, labeled "Recorded demo call". The server allows at most 3 calls
-an hour (placements Twilio refuses don't count), each call is cut at 180 seconds (Twilio's
-`timeLimit`, and the server hangs up itself if a trial account refuses that parameter), and every Twilio webhook must carry a valid
-`X-Twilio-Signature` (403 otherwise). Only the agent's own turn-by-turn transcript is stored. Calls
-are not recorded.
+**Demo safety.** The app only ever dials `DEMO_VENDOR_PHONE`, the author's own number. The seeded
+vendor phone numbers are fake and are never dialed; one function picks the number and a test checks
+it. Starting calls needs `CALLS_ENABLED=true` on the server _and_ the admin key (entered under
+Settings, kept in session storage); automated follow-ups in a chain an admin started don't ask for
+the key again. Visitors without the key see the most recent stored call, labeled "Recorded demo
+call". The server allows at most 6 calls per work order and 12 an hour in total (placements Twilio
+refuses don't count). Each call is cut at 180 seconds (Twilio's `timeLimit`, plus a server-side
+hangup), and every Twilio webhook must carry a valid `X-Twilio-Signature` (403 otherwise). Only the
+agent's own turn-by-turn transcript is stored. Calls are not recorded.
 
-**Trial account.** Twilio trial accounts can only call verified numbers, and a short trial message
-plays before the agent starts. The callee has to press a key to connect, and the call status in the
-UI says so.
+**Twilio account.** Twilio trial accounts can't run a custom script on outbound calls (only
+Twilio's sample scripts), so the live demo uses an upgraded account. A newly upgraded account also
+needs an approved Primary Customer Profile in Trust Hub before it can place calls.
 
-**Real use** needs a purchased Twilio number and vendor consent to automated calls, for example in
-the vendor contract. The FCC treats AI-generated voices as "artificial" voices under the TCPA.
+**Real use** needs vendor consent to automated calls, for example in the vendor contract. The FCC
+treats AI-generated voices as "artificial" voices under the TCPA.
 
 **Trade-off.** Turns are taken one at a time, so expect a pause of about 1 to 2 seconds while the
 model answers, and the vendor can't interrupt the agent mid-sentence. A streaming voice stack would
 fix both but costs more and has more moving parts.
 
 Settings (server only): `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`,
-`DEMO_VENDOR_PHONE`, `CALL_ADMIN_KEY`, `CALLS_ENABLED` (default `false`) and `PUBLIC_API_URL` (the
-public API URL that Twilio webhooks are built and signed on).
+`DEMO_VENDOR_PHONE`, `CALL_ADMIN_KEY`, `CALLS_ENABLED` (default `false`), `PUBLIC_API_URL` (the
+public API URL that Twilio webhooks are built and signed on), `DEMO_RETRY_MINUTES` (default 90; 2
+for a demo video) and `JOBS_SECRET` (for `/api/jobs/run-due`; unset disables the route).
 
 ## Privacy
 
@@ -287,4 +321,6 @@ Directory = repo root, `VITE_API_URL` = the Render URL), MongoDB Atlas free clus
 - No auth or roles, a single tenant, no PII scrubbing, and no real IoT integration (out of scope).
   Vendor acceptance comes from the optional dispatch call; `in_progress` and `completed` aren't
   modeled.
-- **Vendor calls are a demo.** They only ring the author's own phone from a Twilio trial number.
+- **Vendor calls are a demo.** They only ring the author's own phone, so a quote "comparison"
+  is the author playing both vendors. Quotes are rough phone estimates, not bids. The scheduler
+  runs in the API process; on the free tier, retries due while the server sleeps run when it wakes.
