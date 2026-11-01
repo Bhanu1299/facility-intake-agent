@@ -14,6 +14,7 @@ import {
   ScriptedLlm,
   callEnv,
   signedPost,
+  spoken,
   type Scripted,
 } from '../test/calls';
 import { useTestDb } from '../test/db';
@@ -272,7 +273,7 @@ describe('call chains', () => {
       'Tomorrow at 10 am',
       'That is right.',
     ]);
-    expect(twiml[4]).toContain('Our manager will confirm shortly');
+    expect(twiml[4]).toContain('Our manager will get back to you soon.');
     await end(call);
     const q = (await CallModel.findById(call._id).lean())!.quote!;
     expect(q.earliestArrival).toBe(new Date('2026-11-05T15:00:00Z').toISOString());
@@ -316,14 +317,14 @@ describe('call chains', () => {
     // NTE for routine plumbing at Elmwood is below 300: the limit question comes once.
     const twiml = await quote(first, 300, '9 am', 'yes');
     expect(twiml[1]).toContain(
-      "Roughly what would that run? A ballpark's fine, or just your call-out fee and hourly rate.",
+      "The toilet in the men's room at our Elmwood location keeps running.",
     );
-    expect(twiml[1]).not.toContain('not-to-exceed');
-    expect(twiml[3]).toContain("Okay, so that's tomorrow at 9 AM, right?");
-    expect(twiml[4]).toMatch(
-      /Just so you know, our limit on this one is \d+ dollars\. Any chance you could work within that\?/,
-    );
-    expect(twiml[5]).toContain('Our manager will confirm shortly');
+    expect(twiml[1]).toContain('Roughly what would that cost?');
+    expect(twiml[1]).not.toMatch(/budget|limit/i);
+    expect(spoken(twiml[2]!)).toBe("Got it. When's the earliest you could get there?");
+    expect(twiml[3]).toContain('Thursday the 5th at 9 AM. Is that right?');
+    expect(twiml[4]).toMatch(/Our budget's about \$\d+\. Could you work with that\?/);
+    expect(twiml[5]).toContain('Our manager will get back to you soon.');
     expect(twiml.join(' ')).not.toMatch(/\bbook(ed)?\b/i);
     const q1 = (await CallModel.findById(first._id).lean())!;
     expect(q1.outcome).toBe('quoted');
@@ -336,7 +337,7 @@ describe('call chains', () => {
     await quote(second, 120, '2 pm');
     const q2 = (await CallModel.findById(second._id).lean())!;
     expect(q2.quote).toMatchObject({ low: 120, withinNte: 'yes' });
-    expect(q2.transcript.map((t) => t.text).join(' ')).not.toContain('Our limit');
+    expect(q2.transcript.map((t) => t.text).join(' ')).not.toContain('budget');
 
     let chain = await chainFor(woId);
     expect(chain.phase).toBe('quotes_ready');
@@ -369,10 +370,14 @@ describe('call chains', () => {
     expect(booking).toMatchObject({ purpose: 'book', vendorId: second.vendorId });
     expect(booking.bookingQuote).toMatchObject({ low: 120 });
     script.push({ say: 'Great, thanks.' }, { action: 'confirm_job' });
-    const bt = await talk(booking, ['Yes, speaking', 'Yes, I can be there']);
-    expect(bt[1]).toContain("You'd quoted us about 120 dollars.");
-    expect(bt[1]).toContain('Does tomorrow at 2 PM still work for you?');
-    expect(bt[2]).toContain("you're all set for tomorrow at 2 PM");
+    const bt = await talk(booking, ['Oh yeah', 'Yes, I can be there']);
+    expect(bt[0]).toContain(
+      'We called you earlier today about the running toilet at our Elmwood location.',
+    );
+    expect(bt[1]).toContain("Great news, we'd like to book you. Does Thursday at 2 PM still work?");
+    // Neither their quote nor the NTE is restated.
+    expect(spoken(bt[1]!)).not.toMatch(/dollars|\$|budget/);
+    expect(bt[2]).toContain('Perfect, Thursday at 2 PM.');
     await end(booking);
 
     wo = (await WorkOrderModel.findById(woId).lean())!;
@@ -419,8 +424,8 @@ describe('call chains', () => {
       { withinNte: 'maybe', estimate: fixed(450) },
     );
     const twiml = await talk(call, ['Yes', '500 to 700', 'Tomorrow at 9 am', 'Yes', 'Maybe 450']);
-    expect(twiml.filter((t) => t.includes('our limit on this one')).length).toBe(1);
-    expect(twiml[5]).toContain('Our manager will confirm shortly');
+    expect(twiml.filter((t) => t.includes("Our budget's about")).length).toBe(1);
+    expect(twiml[5]).toContain('Our manager will get back to you soon.');
     const done = (await CallModel.findById(call._id).lean())!;
     expect(done.quote).toMatchObject({ quoteType: 'fixed', low: 450, withinNte: 'maybe' });
   });
