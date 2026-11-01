@@ -719,10 +719,16 @@ export class CallService {
     };
     const vendorTurns = call.vendorTurns + 1;
     const base = { vendorTurns, pendingSpeech: null };
-    const arrival = validArrival(
-      parseSpokenArrival(speech, now) ?? (d.arrivalTime ? localIsoToUtc(d.arrivalTime) : null),
-      now,
-    );
+    const spoken = validArrival(parseSpokenArrival(speech, now), now);
+    const arrival =
+      spoken ?? validArrival(d.arrivalTime ? localIsoToUtc(d.arrivalTime) : null, now);
+    // A yes to the read-back confirms it even if the model echoed the time back differently.
+    const pending = call.pendingArrival;
+    const confirmsPending =
+      call.briefRead &&
+      pending !== null &&
+      (d.action === 'confirm_job' || (d.action === 'continue' && isPlainYes(speech))) &&
+      !(spoken && !sameMinute(spoken, pending));
     const readBack = (at: Date): TurnPlan => ({
       says: [],
       question: `Okay, so you'd be there ${formatSpokenTime(at, now)}, right?`,
@@ -731,10 +737,9 @@ export class CallService {
     });
 
     let plan: TurnPlan;
-    switch (d.action) {
+    switch (confirmsPending ? 'confirm_job' : d.action) {
       case 'confirm_job': {
-        const pending = call.pendingArrival;
-        if (pending && (!arrival || sameMinute(arrival, pending))) {
+        if (pending && (confirmsPending || !arrival || sameMinute(arrival, pending))) {
           plan = {
             ...goodbye(
               [
@@ -849,10 +854,19 @@ export class CallService {
     const stated = d.estimate ? normalizeEstimate(d.estimate) : null;
     if (stated) set.estimate = stated;
     if (d.notes) set.quoteNotes = [...call.quoteNotes, d.notes];
-    const arrival = validArrival(
-      parseSpokenArrival(speech, now) ?? (d.arrivalTime ? localIsoToUtc(d.arrivalTime) : null),
-      now,
-    );
+    const spoken = validArrival(parseSpokenArrival(speech, now), now);
+    const arrival =
+      spoken ?? validArrival(d.arrivalTime ? localIsoToUtc(d.arrivalTime) : null, now);
+    // A yes to the read-back saves the arrival, whatever else the model decided this turn
+    // (it can answer "continue", "end", or echo the time back a day off).
+    const confirmed =
+      call.quoteStage === 'arrival' &&
+      call.pendingArrival !== null &&
+      (d.action === 'agree' || isPlainYes(speech)) &&
+      !(spoken && !sameMinute(spoken, call.pendingArrival))
+        ? call.pendingArrival
+        : null;
+    if (confirmed) set.arrivalConfirmed = confirmed;
     const nte = job.job.nte;
     const confidences = [
       ...call.transcript.filter((t) => t.speaker === 'vendor').map((t) => t.confidence),
@@ -951,10 +965,10 @@ export class CallService {
         }
         break;
       case 'arrival':
-        if (arrival && !(call.pendingArrival && sameMinute(arrival, call.pendingArrival))) {
+        if (confirmed) {
+          plan = afterArrival(confirmed);
+        } else if (arrival && !(call.pendingArrival && sameMinute(arrival, call.pendingArrival))) {
           plan = readBack(arrival);
-        } else if (call.pendingArrival && (d.action === 'agree' || isPlainYes(speech))) {
-          plan = afterArrival(call.pendingArrival);
         } else if (call.stageTries >= 1) {
           plan = afterArrival(null);
         } else {
