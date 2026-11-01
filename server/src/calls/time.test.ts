@@ -1,4 +1,11 @@
-import { formatSpokenTime, localIsoToUtc, parseSpokenArrival } from './time';
+import {
+  formatSpokenTime,
+  localIsoToUtc,
+  parseArrival,
+  parseSpokenArrival,
+  spokenDayDate,
+  spokenWeekdayTime,
+} from './time';
 
 // Wednesday Nov 4 2026, 10:00 AM in Buffalo (EST, UTC-5).
 const now = new Date('2026-11-04T15:00:00Z');
@@ -45,6 +52,62 @@ describe('parseSpokenArrival (America/New_York)', () => {
     );
     expect(localIsoToUtc('2026-10-31T09:00')?.toISOString()).toBe('2026-10-31T13:00:00.000Z');
     expect(localIsoToUtc('2026-11-02T09:00')?.toISOString()).toBe('2026-11-02T14:00:00.000Z');
+  });
+});
+
+describe('relative and vague dates (America/New_York, from the call date)', () => {
+  // Now: Wednesday Nov 4 2026, 10:00 AM.
+  it.each([
+    ['10 a.m. from 2 days', '2026-11-06T15:00:00.000Z'],
+    ['in 2 days at 10 am', '2026-11-06T15:00:00.000Z'],
+    ['in two days, around 10', '2026-11-06T15:00:00.000Z'],
+    ['2 days from now at 10', '2026-11-06T15:00:00.000Z'],
+    ['day after tomorrow at 9', '2026-11-06T14:00:00.000Z'],
+    ['this Tuesday at 11', '2026-11-10T16:00:00.000Z'],
+    ['next Tuesday at 11', '2026-11-10T16:00:00.000Z'],
+    ['Monday morning', '2026-11-09T14:00:00.000Z'],
+    ['tomorrow afternoon', '2026-11-05T18:00:00.000Z'],
+  ])('%s is relative and needs a yes', (text, expected) => {
+    const a = parseArrival(text, now);
+    expect(a?.at.toISOString()).toBe(expected);
+    expect(a?.relative).toBe(true);
+  });
+
+  it('"this Tuesday" vs "next Tuesday" said on a Monday', () => {
+    const monday = new Date('2026-11-02T15:00:00Z');
+    expect(parseSpokenArrival('this Tuesday at 11', monday)?.toISOString()).toBe(
+      '2026-11-03T16:00:00.000Z',
+    );
+    expect(parseSpokenArrival('next Tuesday at 11', monday)?.toISOString()).toBe(
+      '2026-11-10T16:00:00.000Z',
+    );
+  });
+
+  it('a named day or date with a clock time is clear', () => {
+    expect(parseArrival('Tuesday at eleven', now)).toEqual({
+      at: new Date('2026-11-10T16:00:00.000Z'),
+      relative: false,
+    });
+    // The Lakeshore quote call: said on Saturday Oct 31 (EDT), arrival after the DST change.
+    const sat = new Date('2026-10-31T22:00:00Z');
+    expect(parseArrival('Monday, November 2 at 10 AM', sat)).toEqual({
+      at: new Date('2026-11-02T15:00:00.000Z'),
+      relative: false,
+    });
+    expect(parseArrival('Tuesday the 3rd at 11', sat)).toEqual({
+      at: new Date('2026-11-03T16:00:00.000Z'),
+      relative: false,
+    });
+  });
+
+  it('read-back forms', () => {
+    const sat = new Date('2026-10-31T22:00:00Z');
+    const tue = new Date('2026-11-03T16:00:00.000Z');
+    expect(spokenDayDate(tue)).toBe('Tuesday the 3rd at 11 AM');
+    expect(spokenWeekdayTime(tue, sat)).toBe('Tuesday at 11 AM');
+    expect(spokenWeekdayTime(new Date('2026-11-12T16:00:00.000Z'), sat)).toBe(
+      'Thursday the 12th at 11 AM',
+    );
   });
 });
 
