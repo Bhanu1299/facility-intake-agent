@@ -168,23 +168,68 @@ Starting calls needs the admin key; without it, approval dispatches by email as 
 
 **Three call modes**
 
-| Mode                             | Default for          | What the agent does                                                                                                                                                                     |
-| -------------------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Quote**                        | routine, low, urgent | Calls the top 2 vendors, one at a time, for a rough estimate and earliest arrival. Never books. A "Quotes ready" proposal shows them side by side; the manager picks (no auto-pick)     |
-| **Book**                         | emergency            | Calls vendor #1 to book now. With "auto-call backup vendors" ticked, a miss or decline moves straight to #2, then #3                                                                    |
-| **Confirm** (booking the winner) | after a Quote pick   | The booking call above, mentioning the vendor's quote and arrival time. On a yes: work order accepted with the ETA and the agreed estimate; the other vendor gets a decline email draft |
+| Mode                             | Default for          | What the agent does                                                                                                                                                                                                  |
+| -------------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Quote**                        | routine, low, urgent | Calls the top 2 vendors, one at a time, for a rough estimate and earliest arrival. Never books. A "Quotes ready" proposal shows them side by side; the manager picks (no auto-pick)                                  |
+| **Book**                         | emergency            | Calls vendor #1 to book now. With "auto-call backup vendors" ticked, a miss or decline moves straight to #2, then #3                                                                                                 |
+| **Confirm** (booking the winner) | after a Quote pick   | A booking call that reminds the vendor of the quote call and asks if their arrival time still works. On a yes: work order accepted with the ETA and the agreed estimate; the other vendor gets a decline email draft |
 
 The manager picks the mode when approving (defaulted from urgency). Advise mode disables all calls.
 
-**Quote calls.** Same disclosure and stop handling as booking calls. The agent confirms the company,
-describes the job (site, problem, urgency, needed-by window), asks for a ballpark ("or just your
-call-out fee and hourly rate"), then the earliest arrival (read back for a yes). It accepts
-a fixed price, a range, rates, or no estimate. If the estimate (or the call-out fee plus 2 hours at
-the hourly rate) is above the NTE, it asks once whether they could work within
-the $N limit and records yes, no or maybe. It never negotiates further and never mentions other
-vendors or their prices. It closes with "our manager will confirm shortly by phone or email". Each
-call produces a strict-schema result (`quoteType`, amounts, `withinNte`, `earliestArrival`,
-`notes`, `confidence`). **Estimates are approximate** and labeled that way everywhere.
+**Script style.** Short and plain, like a person on the phone: one question per turn, about 15
+words at most, contractions, no lists, no filler ("We'll note that"), and never a work order or
+reference number. Vendor names are shortened in speech only ("Queen City Drain & Pipe" → "Queen
+City Drain"). The job is one sentence in the requester's own words from the original request,
+then the timing ("Not urgent, sometime this week" / "Urgent, today if possible" / "Emergency, as
+soon as possible"). If the vendor asks something, the agent answers only from the request, the
+work order and the site; otherwise it says "I don't have that detail. Our manager can fill you
+in." and repeats its question, and the question is logged as "Vendor asked: …". All fixed lines
+are in `server/src/calls/script.ts`, and golden-transcript tests pin them word for word.
+
+A quote call:
+
+> **Agent:** Hi, this is an automated assistant calling for Harbor and Hearth Kitchen. Is this Queen City Drain?
+>
+> **Vendor:** Yeah.
+>
+> **Agent:** Great. The mop sink at our Elmwood location is clogged and backing up. Not urgent, sometime this week. Roughly what would that cost?
+>
+> **Vendor:** Is it just that sink?
+>
+> **Agent:** I don't have that detail. Our manager can fill you in. Roughly what would that cost?
+>
+> **Vendor:** About fifty an hour.
+>
+> **Agent:** Got it. When's the earliest you could get there?
+>
+> **Vendor:** Tuesday at eleven.
+>
+> **Agent:** Tuesday the 3rd at 11 AM, got it. Thanks. Our manager will get back to you soon. If you need us, this number calls us back. Have a good one.
+
+The booking call after the manager picks that quote:
+
+> **Agent:** Hi, this is the automated assistant from Harbor and Hearth Kitchen. We called you Saturday about the clogged mop sink at our Elmwood location.
+>
+> **Vendor:** Oh yeah.
+>
+> **Agent:** Great news, we'd like to book you. Does Tuesday at 11 AM still work?
+>
+> **Vendor:** Yep.
+>
+> **Agent:** Perfect, Tuesday at 11 AM. The address is 812 Elmwood Ave. Thanks!
+
+**Quote calls.** If the vendor hesitates on the price, the agent nudges once ("Ballpark, or your
+hourly rate is fine."). It accepts a fixed price, a range, rates, or no estimate. If the estimate
+(or the call-out fee plus 2 hours at the hourly rate) is above the NTE, it asks once: "Our budget's
+about $N. Could you work with that?" and records yes, no or maybe. It never negotiates further,
+never asks again and never mentions other vendors or their prices. Each call produces a
+strict-schema result (`quoteType`, amounts, `withinNte`, `earliestArrival`, `notes`,
+`confidence`). **Estimates are approximate** and labeled that way everywhere.
+
+**Booking calls.** Booking a quote winner opens with the reminder above and waits for an
+acknowledgement; a vendor who doesn't recall hears the job again before the question. The quote
+and the NTE are not restated. In Book mode (no quote call first) the agent uses the normal opener,
+the one-sentence job, then "Can you take it, and when's the earliest you could get there?"
 
 **Fallbacks**
 
@@ -217,16 +262,21 @@ model, handles these parts:
 
 - **Stop phrases.** "Stop", "not interested", "wrong number", "remove me", "don't call" and "no
   thanks" end the call before the model sees the turn.
-- **Arrival times.** "Tomorrow at 9" and "in two hours" are resolved in the site's time zone
-  (America/New_York). The agent reads the time back, and a booking is only confirmed after a yes.
-- **The order of questions** on a quote call, and the one-time limit question.
-- **Limits.** Six vendor turns on a booking call, nine on a quote call. With no speech the agent
-  asks again once, then ends.
+- **Arrival times.** "Tuesday at 11", "tomorrow at 9", "in two hours", "10 a.m. in 2 days",
+  "day after tomorrow", "this/next Tuesday" and "Monday morning" are resolved in the site's time
+  zone (America/New_York) from the call's date. A clear day and time gets a short read-back
+  ("Tuesday the 3rd at 11 AM, got it."); a relative or vague one is read back with "Is that
+  right?" and needs a yes. A confirmed read-back is always saved.
+- **The order of questions** on a quote call, and the one-time budget question.
+- **Listening.** The agent listens right after each question (`speechTimeout="auto"`); the first
+  question gets 8 seconds of silence before it counts as no answer, later ones 6.
+- **Limits.** Six vendor turns on a booking call, nine on a quote call. With no speech after a
+  question the agent asks again once, then ends. After a statement or closing line it never
+  re-asks: the call ends.
 
-**Disclosure.** Every call opens with: "Hi there, this is an automated assistant calling for
-Harbor and Hearth Kitchen. If you need to reach us, our number is <number, digit by digit>, and you
-can say stop anytime." The script is written to sound like a relaxed person on the phone, but it
-always says up front that it's automated.
+**Disclosure.** Every call says up front that it's an automated assistant calling for Harbor and
+Hearth Kitchen. The callback line comes at the close ("If you need us, this number calls us
+back."). Saying "stop" (or "don't call", "not interested", …) still ends any call at any point.
 
 **Voice.** `CALL_VOICE` picks the Twilio voice (default `Google.en-US-Chirp3-HD-Aoede`, a generative
 voice; any Twilio `<Say>` voice name works, e.g. `Google.en-US-Chirp3-HD-Charon` for a male voice).
@@ -266,7 +316,8 @@ for a demo video) and `JOBS_SECRET` (for `/api/jobs/run-due`; unset disables the
   site name and that site's asset list (id, name, location). For the duplicate check it sees the
   new report and the open work order's title, description and location, and answers yes or no. Budgets,
   vendor prices, vendor details and repair history never go to the model. On a vendor call it
-  sees the work order's details, the NTE, the vendor's name and the call transcript.
+  sees the original request text, the work order's details, the site, the NTE (quote calls, at
+  the budget question only), the vendor's name and the call transcript.
 - **Keys come only from env.** `.env` is git-ignored. The Groq key lives on the server only and is
   never sent to the browser.
 - **Recommended:** turn on Groq **Zero Data Retention** in the Groq console under Data Controls.
@@ -307,6 +358,17 @@ signal submissions and resets per IP.
 **Deploy (free tiers):** API on Render (`render.yaml`), web on Vercel (`vercel.json`, Root
 Directory = repo root, `VITE_API_URL` = the Render URL), MongoDB Atlas free cluster. Pushing to
 `main` redeploys both.
+
+## What's next
+
+- **Staff follow-up questions at intake.** One or two tap-to-answer questions per trade (e.g.
+  "Is water on the floor?", "Is it one sink or several?"), so vendor calls carry richer details and
+  the agent says "I don't have that detail" less often.
+- **Photos on requests.** Attach a photo at intake, shown to the manager and described to vendors.
+- **Auto mode (Phase 3)** for low-risk routine jobs: the agent approves and books within tight
+  limits instead of proposing.
+- **Production calling.** A purchased phone number and vendor consent to automated calls, instead
+  of the demo number that only rings the author's phone.
 
 ## Known limits
 
