@@ -44,7 +44,6 @@ export const MAX_QUOTE_TURNS = 9;
 /** A call still open this long after it was created has lost its final status callback. */
 export const STALE_CALL_MS = (CALL_TIME_LIMIT_SEC + RING_TIMEOUT_SEC + 120) * 1000;
 /** One voice for every line. https://www.twilio.com/docs/voice/twiml/say/text-speech */
-export const VOICE = 'Polly.Joanna-Neural';
 
 export class CallError extends Error {
   constructor(
@@ -72,11 +71,12 @@ export interface PlaceCallInput {
 /** Company name as spoken ("Harbor and Hearth Kitchen"). */
 const SPOKEN_COMPANY = COMPANY_NAME.replace(/&/g, 'and');
 
-const URGENCY_WORD: Record<Urgency, string> = {
-  emergency: 'an emergency',
-  urgent: 'urgent',
-  routine: 'routine',
-  low: 'low priority',
+/** How a person would say the urgency, followed by the window ("within 5 days"). */
+const URGENCY_PHRASE: Record<Urgency, string> = {
+  emergency: "It's an emergency, so we'd need someone",
+  urgent: "It's pretty urgent, so we'd need someone",
+  routine: 'Nothing urgent, anytime',
+  low: 'No rush at all, anytime',
 };
 
 function windowText(urgency: Urgency): string {
@@ -97,36 +97,37 @@ const DAY_MS = 86_400_000;
 /** Lines spoken before the first question: the required disclosure, always first. */
 export function openingLines(env: Pick<Env, 'TWILIO_FROM_NUMBER'>): string[] {
   return [
-    `Hi, this is an automated assistant calling on behalf of ${SPOKEN_COMPANY} about a maintenance job.`,
-    `Our callback number is ${spokenDigits(env.TWILIO_FROM_NUMBER)}.`,
-    'Say stop at any time to end the call.',
+    `Hi there, this is an automated assistant calling for ${SPOKEN_COMPANY}.`,
+    `If you need to reach us, our number is ${spokenDigits(env.TWILIO_FROM_NUMBER)}, and you can say stop anytime.`,
   ];
 }
 
 export function briefLines(job: CallJob, shortSite: string): string[] {
   return [
-    `This is work order ${spokenWorkOrder(job.workOrderNumber)}: ${firstWords(job.title, 10)}, at our ${shortSite} location, ${job.siteAddress}.`,
-    `It's ${URGENCY_WORD[job.urgency]}, needed ${job.window}. The not-to-exceed amount is ${job.nte} dollars.`,
+    `We've got a job at our ${shortSite} location, ${job.siteAddress}. ${firstWords(job.title, 10)}.`,
+    `${URGENCY_PHRASE[job.urgency]} ${job.window}. Our limit on this one is ${job.nte} dollars.`,
   ];
 }
 
-export const BRIEF_QUESTION = "Can you take this job, and what's the earliest you can arrive?";
+export const BRIEF_QUESTION =
+  "Could you take it, and what's the soonest you could get someone out there?";
 
 /** Quote calls describe the job without the NTE; the limit only comes up if the price is over. */
 export function quoteBriefLines(job: CallJob, shortSite: string): string[] {
   return [
-    `We're looking for a quote on work order ${spokenWorkOrder(job.workOrderNumber)}: ${firstWords(job.title, 10)}, at our ${shortSite} location, ${job.siteAddress}.`,
-    `It's ${URGENCY_WORD[job.urgency]}, needed ${job.window}.`,
+    `We're looking for a quote on a job at our ${shortSite} location, ${job.siteAddress}. ${firstWords(job.title, 10)}.`,
+    `${URGENCY_PHRASE[job.urgency]} ${job.window}.`,
   ];
 }
 
 export const ESTIMATE_QUESTION =
-  'Can you give a rough estimate, or your call-out fee and hourly rate?';
-export const ARRIVAL_QUESTION = "What's the earliest you could arrive?";
-export const QUOTE_CLOSE = 'Thanks, our manager will confirm shortly by phone or email. Goodbye.';
+  "Roughly what would that run? A ballpark's fine, or just your call-out fee and hourly rate.";
+export const ARRIVAL_QUESTION = "Okay. And what's the soonest you could get someone out there?";
+export const QUOTE_CLOSE =
+  'Perfect, thanks so much. Our manager will confirm shortly by phone or email. Have a good one!';
 
 const shortAck = (say: string): string =>
-  say.trim().split(/\s+/).length <= 8 ? say : 'Great, thanks.';
+  say.trim().split(/\s+/).length <= 8 ? say : 'Got it, thanks.';
 
 interface TurnPlan {
   says: string[];
@@ -462,7 +463,8 @@ export class CallService {
 
   private render(callId: string, n: number, plan: TurnPlan): string {
     const r = new twilio.twiml.VoiceResponse();
-    const say = { voice: VOICE, language: 'en-US' } as const;
+    // Any Twilio voice name works; the SDK's union type lags behind the voices Twilio offers.
+    const say = { voice: this.env.CALL_VOICE as 'alice', language: 'en-US' } as const;
     for (const line of plan.says) r.say(say, line);
     if (plan.question) {
       // https://www.twilio.com/docs/voice/twiml/gather
@@ -493,7 +495,8 @@ export class CallService {
     const call = await CallModel.findById(callId).lean();
     if (!call || !sidMatches(call, body)) return hangupTwiml();
     if (call.responses['0']) return call.responses['0'];
-    const question = `Am I speaking with ${call.vendorName}?`;
+    // People say "Lakeshore Plumbing", not "Lakeshore Plumbing Co.".
+    const question = `Is this ${call.vendorName.replace(/,?\s+(Co|Inc|LLC)\.?$/i, '')}?`;
     const plan: TurnPlan = { says: openingLines(this.env), question };
     const xml = this.render(callId, 0, plan);
     const now = this.now();
@@ -628,7 +631,7 @@ export class CallService {
     const answeredAt = call.transcript[0]?.at;
     if (answeredAt && now.getTime() - answeredAt.getTime() >= CALL_TIME_LIMIT_SEC * 1000) {
       return goodbye(
-        ["We're out of time, so the manager will follow up by email. Goodbye."],
+        ["I'm out of time here, so our manager will follow up by email. Thanks, bye now."],
         'email_fallback',
         'Call time limit reached',
       );
@@ -643,7 +646,7 @@ export class CallService {
         };
       }
       return goodbye(
-        ["I didn't hear anything, so we'll follow up by email. Goodbye."],
+        ["Seems like I lost you, so we'll follow up by email. Bye now."],
         'email_fallback',
         'No speech from the vendor',
       );
@@ -652,7 +655,7 @@ export class CallService {
     const stop = matchStopPhrase(speech);
     if (stop) {
       return goodbye(
-        ["Sorry to bother you. We won't call again about this job. Goodbye."],
+        ["No problem, sorry to bother you. We won't call again about this one. Bye now."],
         'opted_out',
         `Vendor said "${stop}"`,
       );
@@ -664,14 +667,14 @@ export class CallService {
       const msg = err instanceof Error ? err.message : String(err);
       if (call.llmFailures === 0 && !retry) {
         return {
-          says: ['Sorry, one moment.'],
+          says: ['Sorry, just one sec.'],
           question: null,
           redirectRetry: true,
           set: { llmFailures: 1, pendingSpeech: speech },
         };
       }
       return goodbye(
-        ["Sorry, I'm having trouble on my end. We'll follow up by email. Goodbye."],
+        ["Sorry, I'm having some trouble on my end. We'll follow up by email. Bye now."],
         'email_fallback',
         `Model unavailable: ${msg}`.slice(0, 300),
       );
@@ -722,7 +725,7 @@ export class CallService {
     );
     const readBack = (at: Date): TurnPlan => ({
       says: [],
-      question: `Just to confirm, you'll arrive ${formatSpokenTime(at, now)}. Is that right?`,
+      question: `Okay, so you'd be there ${formatSpokenTime(at, now)}, right?`,
       set: { ...base, pendingArrival: at },
       ...meta,
     });
@@ -735,8 +738,8 @@ export class CallService {
           plan = {
             ...goodbye(
               [
-                `Great, you're confirmed for ${formatSpokenTime(pending, now)}.`,
-                `The work order number is ${spokenWorkOrder(call.workOrderNumber)}. Thank you, goodbye.`,
+                `Perfect, you're all set for ${formatSpokenTime(pending, now)}.`,
+                `Your reference is work order ${spokenWorkOrder(call.workOrderNumber)}. Thanks so much, bye now.`,
               ],
               'confirmed',
               null,
@@ -751,7 +754,7 @@ export class CallService {
         } else {
           plan = {
             says: [],
-            question: "What's the earliest time you could arrive?",
+            question: "And what's the soonest you could get there?",
             set: base,
             ...meta,
           };
@@ -794,7 +797,7 @@ export class CallService {
     if (!plan.hangup && vendorTurns >= MAX_VENDOR_TURNS) {
       plan = {
         ...goodbye(
-          ['Thanks for your time. The manager will follow up by email. Goodbye.'],
+          ['Thanks for your time. Our manager will follow up by email. Bye now.'],
           'ended',
           'Turn limit reached without a decision',
         ),
@@ -817,11 +820,11 @@ export class CallService {
     const q = call.bookingQuote;
     if (!q) return { says, question: BRIEF_QUESTION };
     const est = spokenEstimate(q);
-    says.push(`We'd like to book you.${est ? ` You quoted ${est}, approximately.` : ''}`);
+    says.push(`We'd like to go ahead and book you.${est ? ` You'd quoted us ${est}.` : ''}`);
     const at = call.pendingArrival;
     return {
       says,
-      question: at ? `Can you confirm you'll arrive ${formatSpokenTime(at, now)}?` : BRIEF_QUESTION,
+      question: at ? `Does ${formatSpokenTime(at, now)} still work for you?` : BRIEF_QUESTION,
     };
   }
 
@@ -882,7 +885,7 @@ export class CallService {
       ...meta,
     });
     const readBack = (at: Date): TurnPlan =>
-      ask(`Just to confirm, you could arrive ${formatSpokenTime(at, now)}. Is that right?`, {
+      ask(`Okay, so that's ${formatSpokenTime(at, now)}, right?`, {
         quoteStage: 'arrival',
         stageTries: 0,
         pendingArrival: at,
@@ -896,11 +899,14 @@ export class CallService {
     const afterArrival = (confirmed: Date | null): TurnPlan => {
       set.arrivalConfirmed = confirmed;
       if (!call.nteAsked && overNte(set.estimate ?? call.estimate, nte)) {
-        return ask(`Our limit for this job is ${nte} dollars. Could you work within that?`, {
-          quoteStage: 'limit',
-          stageTries: 0,
-          nteAsked: true,
-        });
+        return ask(
+          `Just so you know, our limit on this one is ${nte} dollars. Any chance you could work within that?`,
+          {
+            quoteStage: 'limit',
+            stageTries: 0,
+            nteAsked: true,
+          },
+        );
       }
       return finish();
     };
@@ -972,7 +978,7 @@ export class CallService {
         ? finish()
         : {
             ...goodbye(
-              ['Thanks for your time. Our manager will follow up by email. Goodbye.'],
+              ['Thanks for your time. Our manager will follow up by email. Bye now.'],
               'ended',
               'Turn limit reached without a quote',
             ),

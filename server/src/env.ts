@@ -39,6 +39,8 @@ const EnvSchema = z.object({
     .positive()
     .max(24 * 60)
     .default(90),
+  /** Twilio <Say> voice. Chirp3-HD voices sound the most like a person on the phone. */
+  CALL_VOICE: z.string().min(1).default('Google.en-US-Chirp3-HD-Aoede'),
   /** Secret for POST /api/jobs/run-due (an external cron in production). Unset = route disabled. */
   JOBS_SECRET: z.string().default(''),
 });

@@ -272,7 +272,7 @@ describe('call chains', () => {
       'Tomorrow at 10 am',
       'That is right.',
     ]);
-    expect(twiml[4]).toContain('our manager will confirm shortly');
+    expect(twiml[4]).toContain('Our manager will confirm shortly');
     await end(call);
     const q = (await CallModel.findById(call._id).lean())!.quote!;
     expect(q.earliestArrival).toBe(new Date('2026-11-05T15:00:00Z').toISOString());
@@ -296,14 +296,14 @@ describe('call chains', () => {
     // NTE for routine plumbing at Elmwood is below 300: the limit question comes once.
     const twiml = await quote(first, 300, '9 am', 'yes');
     expect(twiml[1]).toContain(
-      'Can you give a rough estimate, or your call-out fee and hourly rate?',
+      "Roughly what would that run? A ballpark's fine, or just your call-out fee and hourly rate.",
     );
     expect(twiml[1]).not.toContain('not-to-exceed');
-    expect(twiml[3]).toContain('Just to confirm, you could arrive tomorrow at 9 AM');
+    expect(twiml[3]).toContain("Okay, so that's tomorrow at 9 AM, right?");
     expect(twiml[4]).toMatch(
-      /Our limit for this job is \d+ dollars\. Could you work within that\?/,
+      /Just so you know, our limit on this one is \d+ dollars\. Any chance you could work within that\?/,
     );
-    expect(twiml[5]).toContain('our manager will confirm shortly');
+    expect(twiml[5]).toContain('Our manager will confirm shortly');
     expect(twiml.join(' ')).not.toMatch(/\bbook(ed)?\b/i);
     const q1 = (await CallModel.findById(first._id).lean())!;
     expect(q1.outcome).toBe('quoted');
@@ -350,9 +350,9 @@ describe('call chains', () => {
     expect(booking.bookingQuote).toMatchObject({ low: 120 });
     script.push({ say: 'Great, thanks.' }, { action: 'confirm_job' });
     const bt = await talk(booking, ['Yes, speaking', 'Yes, I can be there']);
-    expect(bt[1]).toContain('You quoted about 120 dollars, approximately.');
-    expect(bt[1]).toContain("Can you confirm you'll arrive tomorrow at 2 PM?");
-    expect(bt[2]).toContain("you're confirmed for tomorrow at 2 PM");
+    expect(bt[1]).toContain("You'd quoted us about 120 dollars.");
+    expect(bt[1]).toContain('Does tomorrow at 2 PM still work for you?');
+    expect(bt[2]).toContain("you're all set for tomorrow at 2 PM");
     await end(booking);
 
     wo = (await WorkOrderModel.findById(woId).lean())!;
@@ -399,8 +399,8 @@ describe('call chains', () => {
       { withinNte: 'maybe', estimate: fixed(450) },
     );
     const twiml = await talk(call, ['Yes', '500 to 700', 'Tomorrow at 9 am', 'Yes', 'Maybe 450']);
-    expect(twiml.filter((t) => t.includes('Our limit for this job')).length).toBe(1);
-    expect(twiml[5]).toContain('our manager will confirm shortly');
+    expect(twiml.filter((t) => t.includes('our limit on this one')).length).toBe(1);
+    expect(twiml[5]).toContain('Our manager will confirm shortly');
     const done = (await CallModel.findById(call._id).lean())!;
     expect(done.quote).toMatchObject({ quoteType: 'fixed', low: 450, withinNte: 'maybe' });
   });

@@ -177,11 +177,11 @@ Starting calls needs the admin key; without it, approval dispatches by email as 
 The manager picks the mode when approving (defaulted from urgency). Advise mode disables all calls.
 
 **Quote calls.** Same disclosure and stop handling as booking calls. The agent confirms the company,
-describes the job (site, problem, urgency, needed-by window), asks "Can you give a rough estimate,
-or your call-out fee and hourly rate?", then the earliest arrival (read back for a yes). It accepts
+describes the job (site, problem, urgency, needed-by window), asks for a ballpark ("or just your
+call-out fee and hourly rate"), then the earliest arrival (read back for a yes). It accepts
 a fixed price, a range, rates, or no estimate. If the estimate (or the call-out fee plus 2 hours at
-the hourly rate) is above the NTE, it asks once: "Our limit for this job is $N. Could you work
-within that?" and records yes, no or maybe. It never negotiates further and never mentions other
+the hourly rate) is above the NTE, it asks once whether they could work within
+the $N limit and records yes, no or maybe. It never negotiates further and never mentions other
 vendors or their prices. It closes with "our manager will confirm shortly by phone or email". Each
 call produces a strict-schema result (`quoteType`, amounts, `withinNte`, `earliestArrival`,
 `notes`, `confidence`). **Estimates are approximate** and labeled that way everywhere.
@@ -223,9 +223,13 @@ model, handles these parts:
 - **Limits.** Six vendor turns on a booking call, nine on a quote call. With no speech the agent
   asks again once, then ends.
 
-**Disclosure.** Every call opens with: "Hi, this is an automated assistant calling on behalf of
-Harbor and Hearth Kitchen about a maintenance job. Our callback number is <number, digit by
-digit>. Say stop at any time to end the call."
+**Disclosure.** Every call opens with: "Hi there, this is an automated assistant calling for
+Harbor and Hearth Kitchen. If you need to reach us, our number is <number, digit by digit>, and you
+can say stop anytime." The script is written to sound like a relaxed person on the phone, but it
+always says up front that it's automated.
+
+**Voice.** `CALL_VOICE` picks the Twilio voice (default `Google.en-US-Chirp3-HD-Aoede`, a generative
+voice; any Twilio `<Say>` voice name works, e.g. `Google.en-US-Chirp3-HD-Charon` for a male voice).
 
 **Demo safety.** The app only ever dials `DEMO_VENDOR_PHONE`, the author's own number. The seeded
 vendor phone numbers are fake and are never dialed; one function picks the number and a test checks

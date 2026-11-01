@@ -53,5 +53,7 @@ services:
         sync: false
       - key: DEMO_RETRY_MINUTES
         sync: false
+      - key: CALL_VOICE
+        sync: false
       - key: JOBS_SECRET
         generateValue: true

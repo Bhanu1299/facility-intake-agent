@@ -307,13 +307,15 @@ describe('vendor dispatch call', () => {
       const res = await signed(app, `/api/twilio/voice/${id}/answer`, { CallSid: sid }).expect(200);
       expect(res.type).toBe('text/xml');
       expect(res.text).toContain(
-        'Hi, this is an automated assistant calling on behalf of Harbor and Hearth Kitchen about a maintenance job.',
+        'Hi there, this is an automated assistant calling for Harbor and Hearth Kitchen.',
       );
-      expect(res.text).toContain('Our callback number is 7 1 6, 5 5 5, 0 1 0 0.');
-      expect(res.text).toContain('Say stop at any time to end the call.');
-      expect(res.text).toContain('Am I speaking with Lakeshore Plumbing Co.?');
+      expect(res.text).toContain(
+        'our number is 7 1 6, 5 5 5, 0 1 0 0, and you can say stop anytime.',
+      );
+      expect(res.text).toContain('you can say stop anytime');
+      expect(res.text).toContain('Is this Lakeshore Plumbing?');
       expect(res.text).toMatch(/<Gather[^>]*input="speech"/);
-      expect(res.text).toContain('voice="Polly.Joanna-Neural"');
+      expect(res.text).toContain('voice="Google.en-US-Chirp3-HD-Aoede"');
     });
   });
 
@@ -330,11 +332,11 @@ describe('vendor dispatch call', () => {
         'Sure, I can be there tomorrow at 9.',
         'Yes, that works.',
       ]);
-      expect(twiml[1]).toContain('This is work order');
-      expect(twiml[1]).toContain('The not-to-exceed amount is');
-      expect(twiml[1]).toContain("what's the earliest you can arrive?");
-      expect(twiml[2]).toContain("Just to confirm, you'll arrive tomorrow at 9 AM. Is that right?");
-      expect(twiml[3]).toContain("Great, you're confirmed for tomorrow at 9 AM.");
+      expect(twiml[1]).toContain("We've got a job at our Elmwood location");
+      expect(twiml[1]).toContain('Our limit on this one is');
+      expect(twiml[1]).toContain("what's the soonest you could get someone out there?");
+      expect(twiml[2]).toContain("Okay, so you'd be there tomorrow at 9 AM, right?");
+      expect(twiml[3]).toContain("Perfect, you're all set for tomorrow at 9 AM.");
       expect(twiml[3]).toContain('<Hangup/>');
 
       const wo = (await WorkOrderModel.findById(woId).lean())!;
@@ -374,7 +376,7 @@ describe('vendor dispatch call', () => {
       ]);
       const app = makeApp(llm);
       const { id, twiml } = await converse(app, ['Yes.', 'I can come today at 2 pm.']);
-      expect(twiml[2]).toContain("Just to confirm, you'll arrive today at 2 PM. Is that right?");
+      expect(twiml[2]).toContain("Okay, so you'd be there today at 2 PM, right?");
       expect((await CallModel.findById(id).lean())!.outcome).toBeNull();
       expect((await WorkOrderModel.findById(woId).lean())!.status).toBe('dispatched');
     });
@@ -493,7 +495,7 @@ describe('vendor dispatch call', () => {
       const llm = new ScriptedLlm([]);
       const app = makeApp(llm);
       const { id, twiml } = await converse(app, ["Please don't call this number."]);
-      expect(twiml[1]).toContain("We won't call again about this job. Goodbye.");
+      expect(twiml[1]).toContain("We won't call again about this one. Bye now.");
       expect(twiml[1]).toContain('<Hangup/>');
       expect(llm.calls).toHaveLength(0);
       expect((await CallModel.findById(id).lean())!.outcome).toBe('opted_out');
@@ -515,7 +517,7 @@ describe('vendor dispatch call', () => {
       const app = makeApp();
       const { id, twiml } = await converse(app, ['', '']);
       expect(twiml[1]).toContain("Sorry, I didn't catch that.");
-      expect(twiml[1]).toContain('Am I speaking with Lakeshore Plumbing Co.?');
+      expect(twiml[1]).toContain('Is this Lakeshore Plumbing?');
       expect(twiml[2]).toContain("we'll follow up by email");
       expect(twiml[2]).toContain('<Hangup/>');
       expect((await CallModel.findById(id).lean())!.outcome).toBe('email_fallback');
@@ -528,12 +530,12 @@ describe('vendor dispatch call', () => {
       ]);
       const app = makeApp(llm);
       const { id, sid, twiml } = await converse(app, ['Yes, this is Lakeshore.']);
-      expect(twiml[1]).toContain('Sorry, one moment.');
+      expect(twiml[1]).toContain('Sorry, just one sec.');
       expect(twiml[1]).toContain(`/api/twilio/voice/${id}/turn?n=2&amp;retry=1`);
       const retry = await signed(app, `/api/twilio/voice/${id}/turn?n=2&retry=1`, {
         CallSid: sid,
       }).expect(200);
-      expect(retry.text).toContain('This is work order');
+      expect(retry.text).toContain("We've got a job at our");
       expect(llm.calls.map((c) => c.user.includes('Yes, this is Lakeshore.'))).toEqual([
         true,
         true,
@@ -550,7 +552,7 @@ describe('vendor dispatch call', () => {
       const app = makeApp(llm);
       const { id, sid } = await converse(app, ['Yes.']);
       const retry = await signed(app, `/api/twilio/voice/${id}/turn?n=2&retry=1`, { CallSid: sid });
-      expect(retry.text).toContain("We'll follow up by email. Goodbye.");
+      expect(retry.text).toContain("We'll follow up by email. Bye now.");
       expect((await CallModel.findById(id).lean())!.outcome).toBe('email_fallback');
     });
 
@@ -580,7 +582,7 @@ describe('vendor dispatch call', () => {
         'Not sure.',
         'Hm.',
       ]);
-      expect(twiml[6]).toContain('The manager will follow up by email. Goodbye.');
+      expect(twiml[6]).toContain('Our manager will follow up by email. Bye now.');
       const call = (await CallModel.findById(id).lean())!;
       expect(call).toMatchObject({ outcome: 'ended', vendorTurns: 6 });
     });
