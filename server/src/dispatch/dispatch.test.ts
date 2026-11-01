@@ -278,6 +278,26 @@ describe('call chains', () => {
     expect(q.earliestArrival).toBe(new Date('2026-11-05T15:00:00Z').toISOString());
   });
 
+  it('Lakeshore bug: a confirmed read-back is saved even when the model ends the call or echoes another day', async () => {
+    const id = await propose('routine');
+    await approveWithPlan(id, { mode: 'quote', autoBackup: false });
+    const call = await lastCall();
+    script.push(
+      { say: 'Great, thanks.' },
+      { say: 'Thanks.', estimate: fixed(120) },
+      // The model reads "November 2" as the 3rd: the read-back must still use what was heard.
+      { say: 'Okay.', arrivalTime: '2026-11-06T10:00' },
+      // On the yes it echoes a different day and ends the call.
+      { say: 'Great, bye.', action: 'end', arrivalTime: '2026-11-07T10:00' },
+    );
+    await talk(call, ['Yes', 'About 120 dollars', 'Friday at 10 am', "Yes that's right, bye"]);
+    await end(call);
+    const done = (await CallModel.findById(call._id).lean())!;
+    expect(done.outcome).toBe('quoted');
+    expect(done.quote!.earliestArrival).toBe(new Date('2026-11-06T15:00:00Z').toISOString());
+    expect(done.summary).not.toContain('no arrival time');
+  });
+
   it('Quote mode: one call at a time, quotes ready, pick → booking call → accepted + decline draft', async () => {
     const id = await propose('routine');
     const res = await approveWithPlan(id, { mode: 'quote', autoBackup: false });
