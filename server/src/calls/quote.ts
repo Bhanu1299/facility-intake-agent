@@ -136,6 +136,18 @@ export function normalizeEstimate(input: unknown): QuoteEstimate | null {
   }
 }
 
+const PLAIN_YES =
+  /^(yes|yeah|yep|yup|correct|right|exactly|sure|ok(ay)?|sounds good|that'?s (right|correct)|that is (right|correct)|you got it)\b/i;
+
+/**
+ * A short, unhedged "yes" to a read-back. The model sometimes answers these with "continue",
+ * which would drop a time the vendor just confirmed.
+ */
+export function isPlainYes(speech: string): boolean {
+  const s = speech.trim().replace(/[.,!]+/g, '');
+  return s.split(/\s+/).length <= 6 && PLAIN_YES.test(s) && !/\b(no|not|but)\b/i.test(s);
+}
+
 /** True when the estimate is over the NTE, which earns the one-time limit question. */
 export function overNte(estimate: QuoteEstimate | null, nte: number): boolean {
   if (!estimate) return false;

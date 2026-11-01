@@ -26,6 +26,7 @@ import { formatSpokenTime, localIsoToUtc, parseSpokenArrival } from './time';
 import {
   decideQuoteTurn,
   finalizeQuote,
+  isPlainYes,
   normalizeEstimate,
   overNte,
   spokenEstimate,
@@ -946,7 +947,7 @@ export class CallService {
       case 'arrival':
         if (arrival && !(call.pendingArrival && sameMinute(arrival, call.pendingArrival))) {
           plan = readBack(arrival);
-        } else if (call.pendingArrival && d.action === 'agree') {
+        } else if (call.pendingArrival && (d.action === 'agree' || isPlainYes(speech))) {
           plan = afterArrival(call.pendingArrival);
         } else if (call.stageTries >= 1) {
           plan = afterArrival(null);

@@ -1,7 +1,7 @@
 import request from 'supertest';
 import { QuoteResult, estimateCeiling, formatEstimate, type Urgency } from '@fia/shared';
 import { createApp } from '../app';
-import { finalizeQuote, normalizeEstimate, overNte } from '../calls/quote';
+import { finalizeQuote, isPlainYes, normalizeEstimate, overNte } from '../calls/quote';
 import { CallModel, type CallDoc } from '../models/call';
 import { ActivityModel, ProposalModel } from '../models/pipeline';
 import { SettingsModel } from '../models/settings';
@@ -58,6 +58,13 @@ describe('quote results', () => {
     });
     expect(normalizeEstimate({ quoteType: 'cheap' })).toBeNull();
     expect(normalizeEstimate({ ...base, quoteType: 'fixed', low: -5 })).toBeNull();
+  });
+
+  it('recognizes a plain yes to a read-back', () => {
+    for (const yes of ['That is right.', 'Yes', "Yeah, that's correct", 'Correct.', 'Sounds good'])
+      expect(isPlainYes(yes)).toBe(true);
+    for (const no of ['No, day after tomorrow', 'Right, but not before noon', 'Maybe', 'Tuesday'])
+      expect(isPlainYes(no)).toBe(false);
   });
 
   it('compares the right amount with the NTE and formats it', () => {
@@ -248,6 +255,28 @@ describe('call chains', () => {
     await end(call);
     return twiml;
   }
+
+  it('a plain "That is right" confirms the read-back even when the model says continue', async () => {
+    const id = await propose('routine');
+    await approveWithPlan(id, { mode: 'quote', autoBackup: false });
+    const call = await lastCall();
+    script.push(
+      { say: 'Great, thanks.' },
+      { say: 'Thanks.', estimate: fixed(120) },
+      { say: 'Okay.' },
+      { say: 'Thank you. We will note that.' },
+    );
+    const twiml = await talk(call, [
+      'You are',
+      'About 120 dollars',
+      'Tomorrow at 10 am',
+      'That is right.',
+    ]);
+    expect(twiml[4]).toContain('our manager will confirm shortly');
+    await end(call);
+    const q = (await CallModel.findById(call._id).lean())!.quote!;
+    expect(q.earliestArrival).toBe(new Date('2026-11-05T15:00:00Z').toISOString());
+  });
 
   it('Quote mode: one call at a time, quotes ready, pick → booking call → accepted + decline draft', async () => {
     const id = await propose('routine');
