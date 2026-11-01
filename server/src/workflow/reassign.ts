@@ -38,7 +38,7 @@ export async function proposeNextVendor(
     const res = await WorkOrderModel.updateOne(
       { _id: wo._id, status: 'dispatched', vendorId: call.vendorId },
       {
-        $set: { status: 'approved', vendorId: null, updatedAt: now },
+        $set: { status: 'approved', vendorId: null, dispatchEmail: null, updatedAt: now },
         ...(declined ? { $addToSet: { declinedVendorIds: call.vendorId } } : {}),
       },
     );

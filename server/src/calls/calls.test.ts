@@ -397,6 +397,7 @@ describe('vendor dispatch call', () => {
       const wo = (await WorkOrderModel.findById(woId).lean())!;
       expect(wo.status).toBe('approved');
       expect(wo.vendorId).toBeNull();
+      expect(wo.dispatchEmail).toBeNull();
       expect(wo.declinedVendorIds).toEqual([vendorId]);
       const call = (await CallModel.findById(id).lean())!;
       expect(call.outcome).toBe('declined');

@@ -1,6 +1,12 @@
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { WORK_ORDER_STATUSES, type WorkOrder, type WorkOrderStatus } from '@fia/shared';
+import { Link, useSearchParams } from 'react-router-dom';
+import {
+  ACTIVE_CHAIN_PHASES,
+  WORK_ORDER_STATUSES,
+  formatEstimate,
+  type WorkOrder,
+  type WorkOrderStatus,
+} from '@fia/shared';
 import { api } from '../api';
 import { useApp } from '../context';
 import { dateTime, money, siteTime, STATUS_LABEL, TRADE_LABEL } from '../format';
@@ -15,6 +21,7 @@ import {
   Tag,
   UrgencyBadge,
 } from '../components/ui';
+import { ChainPanel } from '../components/ChainPanel';
 import { VendorCallPanel } from '../components/VendorCallPanel';
 
 const PAGE_SIZE = 25;
@@ -26,7 +33,9 @@ export function WorkOrdersPage() {
   const { version, sites, siteName, vendorName } = useApp();
   const [status, setStatus] = useState<StatusFilter>('open');
   const [siteId, setSiteId] = useState('');
-  const [openId, setOpenId] = useState<string | null>(null);
+  // ?wo=<id> opens that work order (links from proposals and quote cards).
+  const [params] = useSearchParams();
+  const [openId, setOpenId] = useState<string | null>(params.get('wo'));
   const [shown, setShown] = useState(PAGE_SIZE);
   const wos = useAsync(
     () =>
@@ -171,7 +180,7 @@ function Row({
         </td>
         <td className="text-sm md:px-4 md:py-3">{siteName}</td>
         <td className="text-sm md:px-4 md:py-3">
-          {wo.vendorId ? vendorName : wo.status === 'approved' ? 'Needs a new vendor' : vendorName}
+          {wo.vendorId ? vendorName : wo.status === 'approved' ? 'Not assigned yet' : vendorName}
         </td>
         <td className="text-sm font-medium tabular-nums md:px-4 md:py-3 md:text-right">
           {money(wo.nte)}
@@ -214,7 +223,14 @@ function Row({
                 </pre>
               </div>
             )}
-            <VendorCallPanel wo={wo} onChanged={onChanged} />
+            {wo.agreedQuote && (
+              <p className="mt-2 text-sm">
+                Agreed estimate{' '}
+                <span className="font-semibold tabular-nums">{formatEstimate(wo.agreedQuote)}</span>{' '}
+                <span className="text-slate-500">(approximate, from the quote call)</span>
+              </p>
+            )}
+            <AgentCalls wo={wo} onChanged={onChanged} />
             <Link
               to={`/activity?workOrderId=${wo.id}`}
               className="mt-2 inline-block text-sm text-teal-800 underline"
@@ -224,6 +240,19 @@ function Row({
           </td>
         </tr>
       )}
+    </>
+  );
+}
+
+/** The agent's call chain for this work order (if any) and its calls. */
+function AgentCalls({ wo, onChanged }: { wo: WorkOrder; onChanged: () => void }) {
+  const chain = useAsync(() => api.workOrderChain(wo.id), [wo.id, wo.updatedAt], 4000);
+  const active =
+    chain.data && (ACTIVE_CHAIN_PHASES as readonly string[]).includes(chain.data.phase);
+  return (
+    <>
+      {chain.data && <ChainPanel chain={chain.data} />}
+      <VendorCallPanel wo={wo} onChanged={onChanged} allowManual={!active} />
     </>
   );
 }

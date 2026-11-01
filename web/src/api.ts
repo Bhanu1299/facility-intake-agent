@@ -6,12 +6,14 @@ import {
   Budget,
   CallConfig,
   CallRecord,
+  DispatchChain,
   HealthResponse,
   Proposal,
   SensorReading,
   Site,
   Vendor,
   WorkOrder,
+  type CallPlanInput,
   type ProposalStatus,
   type SignalInput,
   type WorkOrderDraftPatch,
@@ -73,6 +75,7 @@ export const ApprovalResponse = z.object({
   proposal: Proposal,
   workOrder: WorkOrder,
   created: z.boolean(),
+  chain: DispatchChain.nullable().optional(),
 });
 
 export const api = {
@@ -99,8 +102,17 @@ export const api = {
   proposal: (id: string) => call(`/proposals/${id}`, Proposal),
   editProposal: (id: string, patch: WorkOrderDraftPatch) =>
     call(`/proposals/${id}`, Proposal, { method: 'PATCH', body: patch }),
-  approve: (id: string, patch: WorkOrderDraftPatch = {}) =>
-    call(`/proposals/${id}/approve`, ApprovalResponse, { method: 'POST', body: patch }),
+  /** With a call plan (admin key required) the agent starts calling vendors after approval. */
+  approve: (
+    id: string,
+    patch: WorkOrderDraftPatch = {},
+    calls?: { callPlan: CallPlanInput; adminKey: string },
+  ) =>
+    call(`/proposals/${id}/approve`, ApprovalResponse, {
+      method: 'POST',
+      body: calls ? { ...patch, callPlan: calls.callPlan } : patch,
+      headers: calls ? { 'X-Admin-Key': calls.adminKey } : undefined,
+    }),
   reject: (id: string, reason: string) =>
     call(`/proposals/${id}/reject`, Proposal, { method: 'POST', body: { reason } }),
 
@@ -136,6 +148,8 @@ export const api = {
   workOrderCalls: (workOrderId: string) =>
     call(`/work-orders/${workOrderId}/calls`, z.array(CallRecord)),
   latestCall: () => call('/calls/latest', CallRecord.nullable()),
+  workOrderChain: (workOrderId: string) =>
+    call(`/work-orders/${workOrderId}/chain`, DispatchChain.nullable()),
 
   resetDemo: () =>
     call('/demo/reset', z.object({ ok: z.boolean() }).passthrough(), { method: 'POST' }),

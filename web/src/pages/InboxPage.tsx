@@ -39,6 +39,19 @@ export function InboxPage() {
     [proposals.data],
   );
 
+  // Call chains that ran out of vendors: red banner at the top until the manager acts.
+  const unreached = useMemo(
+    () =>
+      (proposals.data ?? []).filter(
+        (p) =>
+          p.status === 'proposed' &&
+          p.needsHuman &&
+          (p.needsHumanReason === 'No vendor reached' ||
+            p.needsHumanReason?.startsWith('Call limit reached')),
+      ),
+    [proposals.data],
+  );
+
   const select = (id: string | null) => {
     const next = new URLSearchParams(params);
     if (id) next.set('p', id);
@@ -56,6 +69,24 @@ export function InboxPage() {
             : 'Requests and sensor alerts, turned into draft work orders. Nothing happens until you approve.'
         }
       />
+
+      {unreached.length > 0 && (
+        <div role="alert" className="mb-4 space-y-1 rounded-lg bg-red-600 px-4 py-3 text-white">
+          <p className="font-semibold">
+            No vendor reached on {unreached.length} job{unreached.length > 1 ? 's' : ''}: choose a
+            vendor manually
+          </p>
+          <ul className="text-sm">
+            {unreached.map((p) => (
+              <li key={p.id}>
+                <button type="button" className="underline" onClick={() => select(p.id)}>
+                  {p.reassign?.workOrderNumber ?? p.draft.title}: {p.draft.title}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="mb-4 flex flex-wrap gap-2" role="tablist">
         {FILTERS.map((f) => (
@@ -137,6 +168,11 @@ export function InboxPage() {
                     <Tag tone="violet">Merge · {p.duplicate?.workOrderNumber}</Tag>
                   )}
                   {p.reassign && <Tag tone="violet">Reassign · {p.reassign.workOrderNumber}</Tag>}
+                  {p.quotes && (
+                    <Tag tone="teal">
+                      Quotes ready · {p.quotes.workOrderNumber} ({p.quotes.cards.length})
+                    </Tag>
+                  )}
                   {p.budget.needsBudgetIncrease && <Tag tone="amber">Over budget</Tag>}
                   {p.status !== 'proposed' && <Tag>{p.status}</Tag>}
                   <span className="whitespace-nowrap text-sm text-slate-500">

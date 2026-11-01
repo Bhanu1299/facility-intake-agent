@@ -8,10 +8,13 @@ import {
   type WorkOrderDraftPatch,
 } from '@fia/shared';
 import { api } from '../api';
+import { useAdminKey } from '../adminKey';
 import { useApp } from '../context';
 import { dateTime, money, TRADE_OPTIONS, tradeLabel, URGENCY_LABEL } from '../format';
 import { useAsync } from '../hooks';
 import { BudgetBar } from './BudgetBar';
+import { CallPlanPicker, defaultPlan, type CallPlanState } from './CallPlanPicker';
+import { QuotesReady } from './QuotesReady';
 import { Button, ErrorBanner, Field, inputClass, Section, Spinner, Tag, UrgencyBadge } from './ui';
 
 interface Props {
@@ -27,17 +30,21 @@ function statusLine(p: Proposal | undefined, adviseMode: boolean): string {
     case 'proposed':
       return adviseMode
         ? 'Draft work order · approvals are off in Advise mode'
-        : p.action === 'reassign'
-          ? 'Reassignment · waiting on you'
-          : 'Draft work order · waiting on you';
+        : p.action === 'quotes'
+          ? 'Quotes ready · pick a vendor'
+          : p.action === 'reassign'
+            ? 'Reassignment · waiting on you'
+            : 'Draft work order · waiting on you';
     case 'advisory':
       return 'Advice only · switch to Propose to act on it';
     case 'approved':
       return p.action === 'merge'
         ? 'Merged · approved by you'
-        : p.action === 'reassign'
-          ? 'Reassigned · new vendor dispatched'
-          : 'Approved · work order created';
+        : p.action === 'quotes'
+          ? 'Vendor picked · booking call queued'
+          : p.action === 'reassign'
+            ? 'Reassigned · new vendor dispatched'
+            : 'Approved · work order created';
     case 'rejected':
       return 'Rejected';
   }
@@ -122,6 +129,15 @@ function ProposalBody({ proposal: p, onChanged }: { proposal: Proposal; onChange
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState('');
   const [approved, setApproved] = useState<WorkOrder | null>(null);
+  const [pickingId, setPickingId] = useState<string | null>(null);
+  const adminKey = useAdminKey();
+  const callConfig = useAsync(() => api.callConfig(), []);
+  const [plan, setPlan] = useState<CallPlanState>(() => defaultPlan(p.draft.urgency));
+  // Calls are offered on new work orders only, to an admin, when the server has them on.
+  const canPlanCalls =
+    p.action === 'create' && Boolean(adminKey) && Boolean(callConfig.data?.enabled);
+  const quotes = p.action === 'quotes' ? p.quotes : null;
+  const notReached = p.checks.some((c) => c.name === 'Previous vendor not reached');
 
   const open = p.status === 'proposed' || p.status === 'advisory';
   const adviseMode = mode === 'advise';
@@ -178,12 +194,28 @@ function ProposalBody({ proposal: p, onChanged }: { proposal: Proposal; onChange
 
   const approve = () =>
     run('approve', async () => {
-      const res = await api.approve(p.id, patch());
+      const calls =
+        canPlanCalls && adminKey && plan.choice !== 'email'
+          ? {
+              callPlan: { mode: plan.choice, autoBackup: plan.autoBackup },
+              adminKey,
+            }
+          : undefined;
+      const res = await api.approve(p.id, patch(), calls);
       setApproved(res.workOrder);
       setEditing(false);
       refreshCatalog();
       onChanged();
     });
+
+  const pick = (vendorId: string) => {
+    setPickingId(vendorId);
+    void run('approve', async () => {
+      const res = await api.approve(p.id, { vendorId });
+      setApproved(res.workOrder);
+      onChanged();
+    }).finally(() => setPickingId(null));
+  };
 
   const reject = () =>
     run('reject', async () => {
@@ -196,7 +228,8 @@ function ProposalBody({ proposal: p, onChanged }: { proposal: Proposal; onChange
     setForm((f) => ({ ...f, [k]: v }));
 
   return (
-    <div className="pb-28">
+    // The action bar grows when it holds the call-plan choice; keep the content clear of it.
+    <div className={canPlanCalls && open ? 'pb-96 sm:pb-64' : 'pb-28'}>
       {/* Banners */}
       <div className="space-y-3 px-5 pt-4">
         {p.safetyRule && open && (
@@ -225,16 +258,29 @@ function ProposalBody({ proposal: p, onChanged }: { proposal: Proposal; onChange
             {p.needsHumanReason && <p className="mt-1 text-amber-800">Why: {p.needsHumanReason}</p>}
           </div>
         )}
+        {p.needsHuman &&
+          (p.needsHumanReason === 'No vendor reached' ||
+            p.needsHumanReason?.startsWith('Call limit reached')) &&
+          open && (
+            <div
+              role="alert"
+              className="rounded-lg bg-red-600 px-4 py-3 text-sm font-semibold text-white"
+            >
+              {p.needsHumanReason}: the agent tried every vendor it could. Choose one below;
+              approving dispatches by email with no more calls.
+            </div>
+          )}
         {p.reassign && (
           <div className="rounded-lg bg-fuchsia-50 px-4 py-3 text-sm text-fuchsia-950 ring-1 ring-fuchsia-200">
             <p className="font-semibold">
-              {p.reassign.previousVendorName} declined {p.reassign.workOrderNumber} on the dispatch
-              call
+              {p.reassign.previousVendorName}{' '}
+              {notReached ? "couldn't be reached about" : 'declined'} {p.reassign.workOrderNumber}
             </p>
             <p className="mt-1">Reason: {p.reassign.reason}</p>
             <p className="mt-1 text-fuchsia-800">
-              Approving dispatches the same work order to the vendor below. The NTE is already
-              committed; only the vendor changes.
+              Approving dispatches the same work order to the vendor below
+              {p.id.startsWith('prop_next_') ? ', and the agent calls them to book' : ''}. The NTE
+              is already committed; only the vendor changes.
             </p>
           </div>
         )}
@@ -264,193 +310,211 @@ function ProposalBody({ proposal: p, onChanged }: { proposal: Proposal; onChange
         </blockquote>
       </div>
 
+      {quotes && (
+        <Section title={`Quotes ready · ${quotes.workOrderNumber}`}>
+          <QuotesReady
+            quotes={quotes}
+            nte={p.draft.nte}
+            canPick={p.status === 'proposed' && !adviseMode}
+            busyVendorId={pickingId}
+            onPick={pick}
+          />
+        </Section>
+      )}
+
       {/* Draft work order */}
-      <Section
-        title={
-          p.action === 'merge'
-            ? 'Proposed update to existing work order'
-            : p.reassign
-              ? `Reassign ${p.reassign.workOrderNumber}`
-              : 'Draft work order'
-        }
-        aside={
-          open && !editing ? (
-            <Button variant="ghost" onClick={() => setEditing(true)}>
-              Edit
-            </Button>
-          ) : null
-        }
-      >
-        {editing && p.action === 'reassign' ? (
-          <div className="grid gap-3">
-            <Field label="Vendor" hint="A reassignment only changes the vendor.">
-              <select
-                className={inputClass}
-                value={form.vendorId ?? ''}
-                onChange={(e) => set('vendorId', e.target.value || null)}
-              >
-                <option value="">Choose a vendor</option>
-                {vendorOptions
-                  .filter((id) => id !== p.reassign?.previousVendorId)
-                  .map((id) => (
-                    <option key={id} value={id}>
-                      {vendorName(id)}
-                      {p.vendors[0]?.vendorId === id ? ' (recommended)' : ''}
-                    </option>
-                  ))}
-              </select>
-            </Field>
-            <div className="flex gap-2">
-              <Button variant="primary" onClick={save} disabled={busy !== null}>
-                {busy === 'save' ? 'Saving…' : 'Save changes'}
+      {!quotes && (
+        <Section
+          title={
+            p.action === 'merge'
+              ? 'Proposed update to existing work order'
+              : p.reassign
+                ? `Reassign ${p.reassign.workOrderNumber}`
+                : 'Draft work order'
+          }
+          aside={
+            open && !editing ? (
+              <Button variant="ghost" onClick={() => setEditing(true)}>
+                Edit
               </Button>
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  setForm(p.draft);
-                  setEditing(false);
-                }}
-              >
-                Cancel
-              </Button>
-            </div>
-          </div>
-        ) : editing ? (
-          <div className="grid gap-3">
-            <Field label="Title">
-              <input
-                className={inputClass}
-                value={form.title}
-                onChange={(e) => set('title', e.target.value)}
-              />
-            </Field>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Trade">
-                <select
-                  className={inputClass}
-                  value={form.trade}
-                  onChange={(e) => set('trade', e.target.value as WorkOrderDraft['trade'])}
-                >
-                  {form.trade === 'unknown' && <option value="unknown">Unknown</option>}
-                  {TRADE_OPTIONS.map((t) => (
-                    <option key={t} value={t}>
-                      {tradeLabel(t, p.safetyRule?.ruleId)}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Urgency">
-                <select
-                  className={inputClass}
-                  value={form.urgency}
-                  onChange={(e) => set('urgency', e.target.value as WorkOrderDraft['urgency'])}
-                >
-                  {URGENCIES.map((u) => (
-                    <option key={u} value={u}>
-                      {URGENCY_LABEL[u]}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            </div>
-            <Field label="Asset">
-              <select
-                className={inputClass}
-                value={form.assetId ?? ''}
-                onChange={(e) => set('assetId', e.target.value || null)}
-              >
-                <option value="">No specific asset</option>
-                {siteAssets.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name} — {a.location}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Location">
-              <input
-                className={inputClass}
-                value={form.locationText}
-                onChange={(e) => set('locationText', e.target.value)}
-              />
-            </Field>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="NTE (USD)" hint="Not-to-exceed spending limit">
-                <input
-                  type="number"
-                  min={0}
-                  step={25}
-                  className={inputClass}
-                  value={form.nte}
-                  onChange={(e) => set('nte', Math.max(0, Number(e.target.value) || 0))}
-                />
-              </Field>
-              <Field label="Vendor">
+            ) : null
+          }
+        >
+          {editing && p.action === 'reassign' ? (
+            <div className="grid gap-3">
+              <Field label="Vendor" hint="A reassignment only changes the vendor.">
                 <select
                   className={inputClass}
                   value={form.vendorId ?? ''}
                   onChange={(e) => set('vendorId', e.target.value || null)}
                 >
                   <option value="">Choose a vendor</option>
-                  {vendorOptions.map((id) => (
-                    <option key={id} value={id}>
-                      {vendorName(id)}
-                      {p.vendors[0]?.vendorId === id ? ' (recommended)' : ''}
+                  {vendorOptions
+                    .filter((id) => id !== p.reassign?.previousVendorId)
+                    .map((id) => (
+                      <option key={id} value={id}>
+                        {vendorName(id)}
+                        {p.vendors[0]?.vendorId === id ? ' (recommended)' : ''}
+                      </option>
+                    ))}
+                </select>
+              </Field>
+              <div className="flex gap-2">
+                <Button variant="primary" onClick={save} disabled={busy !== null}>
+                  {busy === 'save' ? 'Saving…' : 'Save changes'}
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setForm(p.draft);
+                    setEditing(false);
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : editing ? (
+            <div className="grid gap-3">
+              <Field label="Title">
+                <input
+                  className={inputClass}
+                  value={form.title}
+                  onChange={(e) => set('title', e.target.value)}
+                />
+              </Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Trade">
+                  <select
+                    className={inputClass}
+                    value={form.trade}
+                    onChange={(e) => set('trade', e.target.value as WorkOrderDraft['trade'])}
+                  >
+                    {form.trade === 'unknown' && <option value="unknown">Unknown</option>}
+                    {TRADE_OPTIONS.map((t) => (
+                      <option key={t} value={t}>
+                        {tradeLabel(t, p.safetyRule?.ruleId)}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Urgency">
+                  <select
+                    className={inputClass}
+                    value={form.urgency}
+                    onChange={(e) => set('urgency', e.target.value as WorkOrderDraft['urgency'])}
+                  >
+                    {URGENCIES.map((u) => (
+                      <option key={u} value={u}>
+                        {URGENCY_LABEL[u]}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+              <Field label="Asset">
+                <select
+                  className={inputClass}
+                  value={form.assetId ?? ''}
+                  onChange={(e) => set('assetId', e.target.value || null)}
+                >
+                  <option value="">No specific asset</option>
+                  {siteAssets.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name} — {a.location}
                     </option>
                   ))}
                 </select>
               </Field>
+              <Field label="Location">
+                <input
+                  className={inputClass}
+                  value={form.locationText}
+                  onChange={(e) => set('locationText', e.target.value)}
+                />
+              </Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="NTE (USD)" hint="Not-to-exceed spending limit">
+                  <input
+                    type="number"
+                    min={0}
+                    step={25}
+                    className={inputClass}
+                    value={form.nte}
+                    onChange={(e) => set('nte', Math.max(0, Number(e.target.value) || 0))}
+                  />
+                </Field>
+                <Field label="Vendor">
+                  <select
+                    className={inputClass}
+                    value={form.vendorId ?? ''}
+                    onChange={(e) => set('vendorId', e.target.value || null)}
+                  >
+                    <option value="">Choose a vendor</option>
+                    {vendorOptions.map((id) => (
+                      <option key={id} value={id}>
+                        {vendorName(id)}
+                        {p.vendors[0]?.vendorId === id ? ' (recommended)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+              <Field label="Description">
+                <textarea
+                  rows={3}
+                  className={inputClass}
+                  value={form.description}
+                  onChange={(e) => set('description', e.target.value)}
+                />
+              </Field>
+              <div className="flex gap-2">
+                <Button variant="primary" onClick={save} disabled={busy !== null}>
+                  {busy === 'save' ? 'Saving…' : 'Save changes'}
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setForm(p.draft);
+                    setEditing(false);
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
             </div>
-            <Field label="Description">
-              <textarea
-                rows={3}
-                className={inputClass}
-                value={form.description}
-                onChange={(e) => set('description', e.target.value)}
-              />
-            </Field>
-            <div className="flex gap-2">
-              <Button variant="primary" onClick={save} disabled={busy !== null}>
-                {busy === 'save' ? 'Saving…' : 'Save changes'}
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  setForm(p.draft);
-                  setEditing(false);
-                }}
-              >
-                Cancel
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <dl className="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-2 text-[0.95rem]">
-            <dt className="text-slate-500">Title</dt>
-            <dd className="font-medium">{form.title}</dd>
-            <dt className="text-slate-500">Trade</dt>
-            <dd>
-              {form.trade === 'unknown' ? (
-                <Tag tone="amber">Unknown</Tag>
-              ) : (
-                tradeLabel(form.trade, p.safetyRule?.ruleId)
-              )}
-            </dd>
-            <dt className="text-slate-500">Asset</dt>
-            <dd>
-              {asset ? `${asset.name} (${asset.id})` : <span className="text-slate-500">None</span>}
-            </dd>
-            <dt className="text-slate-500">Location</dt>
-            <dd>{form.locationText || '—'}</dd>
-            <dt className="text-slate-500">NTE</dt>
-            <dd className="font-medium tabular-nums">{money(form.nte)}</dd>
-            <dt className="text-slate-500">Vendor</dt>
-            <dd>
-              {form.vendorId ? vendorName(form.vendorId) : <Tag tone="amber">None chosen</Tag>}
-            </dd>
-          </dl>
-        )}
-      </Section>
+          ) : (
+            <dl className="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-2 text-[0.95rem]">
+              <dt className="text-slate-500">Title</dt>
+              <dd className="font-medium">{form.title}</dd>
+              <dt className="text-slate-500">Trade</dt>
+              <dd>
+                {form.trade === 'unknown' ? (
+                  <Tag tone="amber">Unknown</Tag>
+                ) : (
+                  tradeLabel(form.trade, p.safetyRule?.ruleId)
+                )}
+              </dd>
+              <dt className="text-slate-500">Asset</dt>
+              <dd>
+                {asset ? (
+                  `${asset.name} (${asset.id})`
+                ) : (
+                  <span className="text-slate-500">None</span>
+                )}
+              </dd>
+              <dt className="text-slate-500">Location</dt>
+              <dd>{form.locationText || '—'}</dd>
+              <dt className="text-slate-500">NTE</dt>
+              <dd className="font-medium tabular-nums">{money(form.nte)}</dd>
+              <dt className="text-slate-500">Vendor</dt>
+              <dd>
+                {form.vendorId ? vendorName(form.vendorId) : <Tag tone="amber">None chosen</Tag>}
+              </dd>
+            </dl>
+          )}
+        </Section>
+      )}
 
       <Section title="Urgency">
         <div className="flex items-start gap-3">
@@ -484,46 +548,48 @@ function ProposalBody({ proposal: p, onChanged }: { proposal: Proposal; onChange
         </Section>
       )}
 
-      <Section title="Recommended vendors">
-        {p.vendors.length === 0 ? (
-          <p className="text-sm text-slate-600">
-            No vendor passed the filters (trade, insurance, availability).
-          </p>
-        ) : (
-          <ol className="space-y-2">
-            {p.vendors.map((v, i) => (
-              <li
-                key={v.vendorId}
-                className={`rounded-lg px-3 py-2 ring-1 ${
-                  form.vendorId === v.vendorId ? 'bg-teal-50 ring-teal-300' : 'ring-slate-200'
-                }`}
-              >
-                <div className="flex items-baseline justify-between gap-2">
-                  <p className="font-medium">
-                    {i + 1}. {v.name}
-                  </p>
-                  <span className="text-xs tabular-nums text-slate-500">
-                    score {v.score.toFixed(2)}
-                  </span>
-                </div>
-                <p className="text-sm text-slate-700">{v.reason}</p>
-              </li>
-            ))}
-          </ol>
-        )}
-        {p.excludedVendors.length > 0 && (
-          <details className="mt-2 text-sm text-slate-600">
-            <summary className="cursor-pointer">Excluded ({p.excludedVendors.length})</summary>
-            <ul className="mt-1 list-disc pl-5">
-              {p.excludedVendors.map((e) => (
-                <li key={e.name}>
-                  {e.name}: {e.reason}
+      {!quotes && (
+        <Section title="Recommended vendors">
+          {p.vendors.length === 0 ? (
+            <p className="text-sm text-slate-600">
+              No vendor passed the filters (trade, insurance, availability).
+            </p>
+          ) : (
+            <ol className="space-y-2">
+              {p.vendors.map((v, i) => (
+                <li
+                  key={v.vendorId}
+                  className={`rounded-lg px-3 py-2 ring-1 ${
+                    form.vendorId === v.vendorId ? 'bg-teal-50 ring-teal-300' : 'ring-slate-200'
+                  }`}
+                >
+                  <div className="flex items-baseline justify-between gap-2">
+                    <p className="font-medium">
+                      {i + 1}. {v.name}
+                    </p>
+                    <span className="text-xs tabular-nums text-slate-500">
+                      score {v.score.toFixed(2)}
+                    </span>
+                  </div>
+                  <p className="text-sm text-slate-700">{v.reason}</p>
                 </li>
               ))}
-            </ul>
-          </details>
-        )}
-      </Section>
+            </ol>
+          )}
+          {p.excludedVendors.length > 0 && (
+            <details className="mt-2 text-sm text-slate-600">
+              <summary className="cursor-pointer">Excluded ({p.excludedVendors.length})</summary>
+              <ul className="mt-1 list-disc pl-5">
+                {p.excludedVendors.map((e) => (
+                  <li key={e.name}>
+                    {e.name}: {e.reason}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </Section>
+      )}
 
       <Section title={`Budget · ${siteName(p.draft.siteId)}`}>
         {budget ? <BudgetBar budget={budget} nte={form.nte} /> : <Spinner />}
@@ -594,20 +660,31 @@ function ProposalBody({ proposal: p, onChanged }: { proposal: Proposal; onChange
             </div>
           ) : (
             <div className="flex flex-wrap items-center gap-2">
-              <Button
-                variant="primary"
-                onClick={approve}
-                disabled={adviseMode || busy !== null || blockedReason !== null}
-                title={adviseMode ? 'Advise mode: approvals are off' : undefined}
-              >
-                {busy === 'approve'
-                  ? 'Approving…'
-                  : p.action === 'merge'
-                    ? `Approve merge into ${p.duplicate?.workOrderNumber}`
-                    : p.action === 'reassign'
-                      ? 'Approve & dispatch to new vendor'
-                      : 'Approve & dispatch'}
-              </Button>
+              {canPlanCalls && !adviseMode && (
+                <div className="mb-1 w-full">
+                  <CallPlanPicker urgency={form.urgency} value={plan} onChange={setPlan} />
+                </div>
+              )}
+              {!quotes && (
+                <Button
+                  variant="primary"
+                  onClick={approve}
+                  disabled={adviseMode || busy !== null || blockedReason !== null}
+                  title={adviseMode ? 'Advise mode: approvals are off' : undefined}
+                >
+                  {busy === 'approve'
+                    ? 'Approving…'
+                    : p.action === 'merge'
+                      ? `Approve merge into ${p.duplicate?.workOrderNumber}`
+                      : p.action === 'reassign'
+                        ? 'Approve & dispatch to new vendor'
+                        : canPlanCalls && plan.choice === 'quote'
+                          ? 'Approve & collect quotes'
+                          : canPlanCalls && plan.choice === 'book'
+                            ? 'Approve & call to book'
+                            : 'Approve & dispatch'}
+                </Button>
+              )}
               <Button
                 variant="danger"
                 onClick={() => {
@@ -616,11 +693,17 @@ function ProposalBody({ proposal: p, onChanged }: { proposal: Proposal; onChange
                 }}
                 disabled={busy !== null}
               >
-                Reject
+                {quotes ? 'Reject all quotes' : 'Reject'}
               </Button>
+              {quotes && !adviseMode && (
+                <span className="text-xs text-slate-500">
+                  Rejecting asks the next unused vendor for a quote, if there is one.
+                </span>
+              )}
               {adviseMode ? (
                 <span className="text-xs text-slate-500">Advise mode: approvals are off.</span>
               ) : (
+                !quotes &&
                 blockedReason && (
                   <p className="w-full text-sm text-amber-800" role="status">
                     {blockedReason}
@@ -651,10 +734,23 @@ function ApprovedWorkOrder({
   const w = wo.data;
   return (
     <Section title="Approved">
-      <p className="text-[0.95rem]">
-        <span className="font-semibold">{w.number}</span> is <strong>{w.status}</strong> to{' '}
-        {vendorName(w.vendorId)} · NTE {money(w.nte)} committed.
-      </p>
+      {w.status === 'approved' && !w.vendorId ? (
+        <p className="text-[0.95rem]">
+          <span className="font-semibold">{w.number}</span> created · NTE {money(w.nte)} committed.
+          The agent is calling vendors for quotes, one at a time.{' '}
+          <Link to={`/work-orders?wo=${w.id}`} className="text-teal-800 underline">
+            Follow it live
+          </Link>
+        </p>
+      ) : (
+        <p className="text-[0.95rem]">
+          <span className="font-semibold">{w.number}</span> is <strong>{w.status}</strong> to{' '}
+          {vendorName(w.vendorId)} · NTE {money(w.nte)} committed.{' '}
+          <Link to={`/work-orders?wo=${w.id}`} className="text-teal-800 underline">
+            Work order
+          </Link>
+        </p>
+      )}
       {w.dispatchEmail && (
         <div className="mt-3 overflow-hidden rounded-lg ring-1 ring-slate-200">
           <div className="flex items-center justify-between bg-slate-50 px-3 py-2 text-xs text-slate-600">

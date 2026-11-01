@@ -1,9 +1,12 @@
 import type {
   CallOutcome,
   CallStatus,
+  ChainPhase,
+  ChainVendorState,
   Trade,
   TradeOrUnknown,
   Urgency,
+  WithinNte,
   WorkOrderStatus,
 } from '@fia/shared';
 
@@ -92,6 +95,31 @@ export const CALL_OUTCOME_LABEL: Record<CallOutcome, string> = {
   opted_out: 'Asked not to be called',
   ended: 'Ended without a decision · email fallback used',
   email_fallback: 'Email fallback used',
+};
+
+export const CHAIN_PHASE_LABEL: Record<ChainPhase, string> = {
+  quoting: 'Collecting quotes',
+  quotes_ready: 'Quotes ready · waiting on you',
+  booking: 'Booking call',
+  awaiting_approval: 'Next vendor · waiting on you',
+  booked: 'Booked',
+  needs_human: 'No vendor reached · needs you',
+  closed: 'Handed to the manager',
+};
+
+export const CHAIN_VENDOR_STATE_LABEL: Record<ChainVendorState, string> = {
+  unused: 'Not called',
+  waiting: 'In progress',
+  quoted: 'Quoted',
+  dropped: 'Out',
+  booked: 'Booked',
+};
+
+export const WITHIN_NTE_LABEL: Record<WithinNte, string> = {
+  yes: 'Within the limit',
+  no: "Can't work within the limit",
+  maybe: 'Maybe within the limit',
+  unknown: 'Limit not discussed',
 };
 
 /** Absolute local time for ETAs, in the sites' zone (all sites are in Buffalo). */
