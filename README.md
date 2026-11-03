@@ -1,5 +1,7 @@
 # Intake Agent (facility-intake-agent)
 
+**Overview** · [Design](docs/design.md) · [Vendor calls](docs/vendor-calls.md) · [Eval](docs/eval.md) · [Setup](docs/setup.md)
+
 Restaurant staff report problems the way people actually talk ("walk in is warm again", "huele a
 gas cerca de la freidora"), and sensors send raw readings. **Intake Agent** turns each one into a
 draft work order: it works out the trade, the asset and the urgency, checks for duplicates and
@@ -64,263 +66,18 @@ Stack: TypeScript everywhere, npm workspaces (`shared` zod schemas, `server` Exp
 `web` React + Vite + Tailwind), Groq through the OpenAI SDK with strict structured outputs
 (`openai/gpt-oss-20b` first, `openai/gpt-oss-120b` on escalation).
 
-## How this plugs into Vera
+## Results at a glance
 
-**One way in.** Every input goes to `POST /api/signals`:
+- **Safety recall 100%** on every eval run: gas, smoke, fire, flood and injury reports are always
+  flagged Emergency, with 0 false alarms.
+- **Holdout (20 unseen cases): 65% all fields correct**, 95% trade, 100% asset, 0 urgency
+  under-calls: when urgency is wrong, it is rated more urgent, never less. [Full eval →](docs/eval.md)
+- **Approve is idempotent and budget-safe:** one work order and one budget commit, even from two
+  tabs at once. [Design →](docs/design.md)
+- **Optional vendor phone calls:** an AI voice agent collects quotes or books the job, with
+  fallbacks, rate limits and a stop-phrase kill switch. [Vendor calls →](docs/vendor-calls.md)
 
-```jsonc
-{ "type": "request", "siteId": "elmwood", "text": "toilet in the mens room is running again" }
-{ "type": "sensor", "assetId": "amherst-walkin-cooler", "metric": "temperature", "value": 41.8, "unit": "F" }
-```
-
-Vera's chat, a QR page, a sensor gateway or an email parser would all post here. The response is
-`202 { signalId }`, and the result shows up as a proposal.
-
-**Action tools Vera would call.** Each one is an approval-gated endpoint, safe to retry:
-
-| Tool                             | Endpoint                          | What it does                                                                                                        |
-| -------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Read proposal                    | `GET /api/proposals/:id`          | Draft, reasons, vendors, budget check, checks run                                                                   |
-| Edit draft                       | `PATCH /api/proposals/:id`        | Change trade, asset, urgency, NTE, vendor… (logged)                                                                 |
-| **Create work order + dispatch** | `POST /api/proposals/:id/approve` | For a `create` proposal: creates the work order, **commits the budget**, drafts the vendor email, sets `dispatched` |
-| **Merge**                        | `POST /api/proposals/:id/approve` | For a `merge` proposal: adds the report to the open work order; commits only the extra NTE if urgency went up       |
-| Reject                           | `POST /api/proposals/:id/reject`  | Requires a reason                                                                                                   |
-| Audit                            | `GET /api/activity?proposalId=…`  | Every step and human action                                                                                         |
-
-Approve is idempotent. Calling it twice, or from two tabs at once, gives one work order and one
-budget commit.
-
-**Where the autonomy setting lives.** One server-side setting, `GET/PUT /api/settings/autonomy`
-(stored in MongoDB, default from `AUTONOMY_MODE`). The server enforces it. The UI only shows it,
-so a client can't bypass it.
-
-## Autonomy dial
-
-| Dial        | Vera phase | Behavior here                                                                                                                                                      |
-| ----------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Advise**  | Phase 1    | The agent still analyzes everything, but proposals are marked advisory and approve returns `409`. Nothing can be dispatched until the dial moves to Propose.       |
-| **Propose** | Phase 2    | **This prototype.** The agent drafts each action; a manager approves, edits or rejects every one.                                                                  |
-| **Auto**    | Phase 3    | Shown but disabled (`409` from the API). Auto-approval would need a track record from the eval and the Activity Log first, plus limits such as NTE caps per trade. |
-
-## Eval results
-
-There are 60 labeled cases: 40 for tuning, and a 20-case holdout that was never used for tuning.
-The tune set and the AI half of the holdout were written by the author before any prompt existed.
-The human half of the holdout uses messages written by a person, with expected answers labeled by a
-separate AI reviewer, not the prompt author.
-
-**Holdout** (`eval/report-holdout.md`, run once, no prompt changes after):
-
-| Metric                           | AI (10)           | Human (10)        | Combined (20)                  |
-| -------------------------------- | ----------------- | ----------------- | ------------------------------ |
-| All fields correct               | 60% (6/10)        | 70% (7/10)        | **65% (13/20)**                |
-| Safety recall (must be 100%)     | **100% (1/1)**    | **100% (2/2)**    | **100% (3/3)**, 0 false alarms |
-| Trade                            | 90% (9/10)        | 100% (10/10)      | 95% (19/20)                    |
-| Asset                            | 100% (10/10)      | 100% (10/10)      | 100% (20/20)                   |
-| Urgency exact / within one level | 70% / 100%        | 80% / 100%        | 75% / 100%                     |
-| Urgency under-calls              | 0% (0/10)         | 0% (0/10)         | 0% (0/20)                      |
-| Duplicates (precision / recall)  | 100% / 100% (2/2) | 100% / 100% (1/1) | 100% / 100% (3/3)              |
-| Needs-human recall               | n/a               | 0% (0/1)          | 0% (0/1)                       |
-
-Of the 7 misses, 5 are urgency over-calls (rated one level more urgent than labeled), 1 is a trade
-miss (torn walk-in cooler door seal sent to handyman, not refrigeration) and 1 is a missed
-needs-human flag (a loose, shaking ceiling AC vent).
-
-Known weakness: on an ambiguous HVAC report (two rooftop units, no room named) it left the unit
-blank but didn't flag the case for a human to ask. Over-calls lean toward caution; no under-calls.
-
-**Tune set** (`eval/report-tune.md`, the prompt as committed):
-
-| Metric                           | Result                         |
-| -------------------------------- | ------------------------------ |
-| Safety recall (must be 100%)     | **100% (5/5)**, 0 false alarms |
-| Trade                            | 100% (40/40)                   |
-| Asset                            | 95% (38/40)                    |
-| Urgency exact / within one level | 87.5% / 100%                   |
-| Urgency under-calls              | 0% (0/40)                      |
-| Duplicates (precision / recall)  | 100% / 100% (4/4)              |
-| Needs-human (precision / recall) | 100% / 100% (4/4)              |
-| Escalated to the big model       | 10%                            |
-| Latency avg / p95                | 0.81 s / 1.9 s                 |
-| Tokens / cost per request        | ~1,735 tokens / ~$0.0002       |
-
-What tuning showed (four full runs, tune set only):
-
-- Safety, trade, duplicates and needs-human were right in every run. The misses are almost all
-  urgency borderlines, such as whether a slow ice machine is routine or urgent.
-- Results move by about ±2 cases between identical runs even at temperature 0, so small prompt
-  changes can't be told apart from noise with 40 cases.
-- Run 1 (base prompt): 30/40 with 2 under-calls. Run 2 (added "start from routine" rules): 30/40
-  with 1 under-call. Run 3 (rules as an ordered checklist): 29/40 with **6 under-calls**. The
-  committed prompt after run 3 was run 2's, because under-calling an urgent problem costs more than
-  over-calling it.
-- Run 4 (after QA): added rules for active leaks the reporter stresses (urgent), fixtures that run
-  nonstop but drain (routine), and any rodent or roach in a food area incl. dry storage (urgent).
-  **33/40 with 0 under-calls**; this is the committed prompt. Remaining misses are over-calls by one
-  level and two asset picks.
-
-## Vendor call (optional)
-
-After a manager approves a work order, an AI voice agent can phone vendors: to collect rough
-quotes, or to book the job and an arrival time. Drafted emails stay as the fallback and the record.
-Starting calls needs the admin key; without it, approval dispatches by email as before.
-
-**Three call modes**
-
-| Mode                             | Default for          | What the agent does                                                                                                                                                                                                  |
-| -------------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Quote**                        | routine, low, urgent | Calls the top 2 vendors, one at a time, for a rough estimate and earliest arrival. Never books. A "Quotes ready" proposal shows them side by side; the manager picks (no auto-pick)                                  |
-| **Book**                         | emergency            | Calls vendor #1 to book now. With "auto-call backup vendors" ticked, a miss or decline moves straight to #2, then #3                                                                                                 |
-| **Confirm** (booking the winner) | after a Quote pick   | A booking call that reminds the vendor of the quote call and asks if their arrival time still works. On a yes: work order accepted with the ETA and the agreed estimate; the other vendor gets a decline email draft |
-
-The manager picks the mode when approving (defaulted from urgency). Advise mode disables all calls.
-
-**Script style.** Short and plain, like a person on the phone: one question per turn, about 15
-words at most, contractions, no lists, no filler ("We'll note that"), and never a work order or
-reference number. Vendor names are shortened in speech only ("Queen City Drain & Pipe" → "Queen
-City Drain"). The job is one sentence in the requester's own words from the original request,
-then the timing ("Not urgent, sometime this week" / "Urgent, today if possible" / "Emergency, as
-soon as possible"). If the vendor asks something, the agent answers only from the request, the
-work order and the site; otherwise it says "I don't have that detail. Our manager can fill you
-in." and repeats its question, and the question is logged as "Vendor asked: …". All fixed lines
-are in `server/src/calls/script.ts`, and golden-transcript tests pin them word for word.
-
-A quote call:
-
-> **Agent:** Hi, this is an automated assistant calling for Harbor and Hearth Kitchen. Is this Queen City Drain?
->
-> **Vendor:** Yeah.
->
-> **Agent:** Great. The mop sink at our Elmwood location is clogged and backing up. Not urgent, sometime this week. Roughly what would that cost?
->
-> **Vendor:** Is it just that sink?
->
-> **Agent:** I don't have that detail. Our manager can fill you in. Roughly what would that cost?
->
-> **Vendor:** About fifty an hour.
->
-> **Agent:** Got it. When's the earliest you could get there?
->
-> **Vendor:** Tuesday at eleven.
->
-> **Agent:** Tuesday the 3rd at 11 AM, got it. Thanks. Our manager will get back to you soon. If you need us, this number calls us back. Have a good one.
-
-The booking call after the manager picks that quote:
-
-> **Agent:** Hi, this is the automated assistant from Harbor and Hearth Kitchen. We called you Saturday about the clogged mop sink at our Elmwood location.
->
-> **Vendor:** Oh yeah.
->
-> **Agent:** Great news, we'd like to book you. Does Tuesday at 11 AM still work?
->
-> **Vendor:** Yep.
->
-> **Agent:** Perfect, Tuesday at 11 AM. The address is 812 Elmwood Ave. Thanks!
-
-**Quote calls.** If the vendor hesitates on the price, the agent nudges once ("Ballpark, or your
-hourly rate is fine."). It accepts a fixed price, a range, rates, or no estimate. If the estimate
-(or the call-out fee plus 2 hours at the hourly rate) is above the NTE, it asks once: "Our budget's
-about $N. Could you work with that?" and records yes, no or maybe. It never negotiates further,
-never asks again and never mentions other vendors or their prices. Each call produces a
-strict-schema result (`quoteType`, amounts, `withinNte`, `earliestArrival`, `notes`,
-`confidence`). **Estimates are approximate** and labeled that way everywhere.
-
-**Booking calls.** Booking a quote winner opens with the reminder above and waits for an
-acknowledgement; a vendor who doesn't recall hears the job again before the question. The quote
-and the NTE are not restated. In Book mode (no quote call first) the agent uses the normal opener,
-the one-sentence job, then "Can you take it, and when's the earliest you could get there?"
-
-**Fallbacks**
-
-| Situation                    | Routine / low                                                                                                                        | Urgent                                    | Emergency (Book mode)                                                    |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------- | ------------------------------------------------------------------------ |
-| Quote call missed            | Request-for-quote email draft, one retry after `DEMO_RETRY_MINUTES`; the next vendor is called meanwhile. Retry missed → next vendor | Next vendor at once                       | n/a                                                                      |
-| Booking call missed          | One retry after the delay, then the runner-up as a one-click proposal                                                                | Runner-up as a one-click proposal at once | Auto-backup on: call #2 at once, then #3. Off: propose the next vendor   |
-| Vendor declines or says stop | Next vendor (quotes) or runner-up proposal (booking)                                                                                 | Same                                      | Auto-backup on: next vendor at once. Off: the existing reassign proposal |
-| Manager rejects all quotes   | Quote call to the next unused vendor                                                                                                 | Same                                      | n/a                                                                      |
-| Every vendor tried           | Needs a human: "No vendor reached", red banner at the top of Inbox                                                                   | Same                                      | Same                                                                     |
-
-Every step (call started, outcome, quote captured, retry scheduled, chain advanced, manager pick,
-email drafted) is written to the Activity Log.
-
-**Scheduling.** Every call goes to the same demo phone, so calls are strictly sequential: the next
-one is scheduled when the previous call reaches a final status, and the scheduler never dials while
-a call is on the line. Scheduled calls live in a Mongo collection (`scheduledCalls`), not in-memory
-timers, and run from `POST /api/jobs/run-due` (header `X-Jobs-Secret`), on server start and every 2
-minutes while the server is awake. Production would hit that route from an external cron. On
-Render's free tier a sleeping server runs overdue jobs when it wakes.
-
-**How the loop works.** The server places an outbound call with Twilio Programmable Voice
-(`Calls.create`) and runs its own turn loop. Each turn is TwiML `<Say>` followed by
-`<Gather input="speech">` (Twilio's phone-call speech model). Twilio posts what the vendor said
-(`SpeechResult`) to a webhook, and the server asks the Groq small model for one strict-schema
-decision. The big model runs only if the small model's output fails validation. Call turns use their
-own client with no retries, a 5 s timeout and a token cap. If the model is slow the agent says
-"Sorry, one moment" and tries once more, then ends with "we'll follow up by email". Code, not the
-model, handles these parts:
-
-- **Stop phrases.** "Stop", "not interested", "wrong number", "remove me", "don't call" and "no
-  thanks" end the call before the model sees the turn.
-- **Arrival times.** "Tuesday at 11", "tomorrow at 9", "in two hours", "10 a.m. in 2 days",
-  "day after tomorrow", "this/next Tuesday" and "Monday morning" are resolved in the site's time
-  zone (America/New_York) from the call's date. A clear day and time gets a short read-back
-  ("Tuesday the 3rd at 11 AM, got it."); a relative or vague one is read back with "Is that
-  right?" and needs a yes. A confirmed read-back is always saved.
-- **The order of questions** on a quote call, and the one-time budget question.
-- **Listening.** The agent listens right after each question (`speechTimeout="auto"`); the first
-  question gets 8 seconds of silence before it counts as no answer, later ones 6.
-- **Limits.** Six vendor turns on a booking call, nine on a quote call. With no speech after a
-  question the agent asks again once, then ends. After a statement or closing line it never
-  re-asks: the call ends.
-
-**Disclosure.** Every call says up front that it's an automated assistant calling for Harbor and
-Hearth Kitchen. The callback line comes at the close ("If you need us, this number calls us
-back."). Saying "stop" (or "don't call", "not interested", …) still ends any call at any point.
-
-**Voice.** `CALL_VOICE` picks the Twilio voice (default `Google.en-US-Chirp3-HD-Aoede`, a generative
-voice; any Twilio `<Say>` voice name works, e.g. `Google.en-US-Chirp3-HD-Charon` for a male voice).
-
-**Demo safety.** The app only ever dials `DEMO_VENDOR_PHONE`, the author's own number. The seeded
-vendor phone numbers are fake and are never dialed; one function picks the number and a test checks
-it. Starting calls needs `CALLS_ENABLED=true` on the server _and_ the admin key (entered under
-Settings, kept in the browser's local storage until "Forget key"); automated follow-ups in a chain
-an admin started don't ask for the key again. Visitors without the key see the most recent stored
-call, labeled "Recorded demo call". The server allows at most 6 calls per work order and 12 an hour in total (placements Twilio
-refuses don't count). Each call is cut at 180 seconds (Twilio's `timeLimit`, plus a server-side
-hangup), and every Twilio webhook must carry a valid `X-Twilio-Signature` (403 otherwise). Only the
-agent's own turn-by-turn transcript is stored. Calls are not recorded.
-
-**Twilio account.** Twilio trial accounts can't run a custom script on outbound calls (only
-Twilio's sample scripts), so the live demo uses an upgraded account. A newly upgraded account also
-needs an approved Primary Customer Profile in Trust Hub before it can place calls.
-
-**Real use** needs vendor consent to automated calls, for example in the vendor contract. The FCC
-treats AI-generated voices as "artificial" voices under the TCPA.
-
-**Trade-off.** Turns are taken one at a time, so expect a pause of about 1 to 2 seconds while the
-model answers, and the vendor can't interrupt the agent mid-sentence. A streaming voice stack would
-fix both but costs more and has more moving parts.
-
-## Privacy
-
-- **Runs entirely on your infrastructure, with your database and your API key.** The server only
-  talks to its own MongoDB and the configured LLM endpoint. There is no analytics, tracking or
-  telemetry of any kind, on the server or in the web app.
-- **The model sees as little as possible:** the request text (or the sensor reading in words), the
-  site name and that site's asset list (id, name, location). For the duplicate check it sees the
-  new report and the open work order's title, description and location, and answers yes or no. Budgets,
-  vendor prices, vendor details and repair history never go to the model. On a vendor call it
-  sees the original request text, the work order's details, the site, the NTE (quote calls, at
-  the budget question only), the vendor's name and the call transcript.
-- **Keys come only from env.** `.env` is git-ignored. The Groq key lives on the server only and is
-  never sent to the browser.
-- **Recommended:** turn on Groq **Zero Data Retention** in the Groq console under Data Controls.
-- **Private mode:** gpt-oss is open-weight, so you can run it on your own server behind any
-  OpenAI-compatible endpoint (vLLM, Ollama, etc.) and set `LLM_BASE_URL`, `LLM_MODEL_SMALL` and
-  `LLM_MODEL_BIG`. Then no request data leaves your network. **Private mode is supported by
-  configuration but was not tested in this prototype.**
-
-## Run locally, seed, test, eval
+## Quick start
 
 Requires Node 22 (`nvm use`).
 
@@ -330,50 +87,8 @@ cp .env.example .env     # add GROQ_API_KEY; leave MONGODB_URI empty for an in-m
 npm run dev              # API on :4000 (auto-seeds), web on :5173 (proxies /api)
 ```
 
-Open http://localhost:5173. Try `/r/elmwood` (the QR page) and the Sensor simulator.
-
-| Command                                | What it does                                                                                                                                 |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm run seed`                         | Wipes and reseeds the database in `MONGODB_URI` (5 sites, 55 assets, 13 vendors, 100 completed + 6 open work orders, 14 days of sensor data) |
-| _Reset demo_ button                    | Same reset from the UI (`POST /api/demo/reset`)                                                                                              |
-| `npm test`                             | Jest unit and API tests. No LLM calls (the model client is faked); MongoDB runs in memory                                                    |
-| `npm run eval -- --set tune`           | Runs the 40 tune cases through the real pipeline on Groq and writes `eval/report-tune.md`                                                    |
-| `npm run eval -- --set holdout`        | The 20 holdout cases (10 AI-written, 10 human-written). Reports AI, human and combined scores. Run once                                      |
-| `npm run lint` / `typecheck` / `build` | The usual                                                                                                                                    |
-
-The eval always uses its own in-memory database (it ignores `MONGODB_URI`) and reseeds before
-every case. It is paced for the Groq free tier (about 7K tokens and 25 requests per minute per
-model; override with `EVAL_TPM` / `EVAL_RPM`), and 429s are retried with backoff. It exits non-zero
-if safety recall is below 100%.
-
-**Environment variables** (all in `.env.example` except the two eval-only ones):
-
-| Variable                                   | Required / optional                            | Default                          | What it does                                             |
-| ------------------------------------------ | ---------------------------------------------- | -------------------------------- | -------------------------------------------------------- |
-| `GROQ_API_KEY`                             | **Required**                                   | none                             | LLM key for intake, the eval and call turns. Server only |
-| `MONGODB_URI`                              | **Required** in production; optional locally   | in-memory DB                     | MongoDB connection string                                |
-| `CORS_ORIGIN`                              | **Required** in production; optional locally   | `http://localhost:5173`          | Allowed web origin(s), comma-separated                   |
-| `VITE_API_URL`                             | **Required** for the deployed web app (Vercel) | none (dev proxies `/api`)        | API base URL the web app calls                           |
-| `PORT`                                     | Optional                                       | `4000`                           | API port                                                 |
-| `NODE_ENV`                                 | Optional                                       | `development`                    | `development`, `test` or `production`                    |
-| `LLM_BASE_URL`                             | Optional                                       | `https://api.groq.com/openai/v1` | Any OpenAI-compatible endpoint (private mode)            |
-| `LLM_MODEL_SMALL` / `LLM_MODEL_BIG`        | Optional                                       | `openai/gpt-oss-20b` / `-120b`   | Small model first, big model on escalation               |
-| `AUTONOMY_MODE`                            | Optional                                       | `propose`                        | Starting autonomy mode: `advise`, `propose` or `auto`    |
-| `DEMO_RATE_LIMIT_PER_HOUR`                 | Optional                                       | `20`                             | Signal submissions and resets per IP per hour            |
-| `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` | Optional (required for vendor calls)           | none                             | Twilio credentials                                       |
-| `TWILIO_FROM_NUMBER`                       | Optional (required for vendor calls)           | none                             | Caller ID for vendor calls                               |
-| `DEMO_VENDOR_PHONE`                        | Optional (required for vendor calls)           | none                             | The only number the app ever dials                       |
-| `CALL_ADMIN_KEY`                           | Optional (required for vendor calls)           | none                             | Admin key needed to start calls                          |
-| `PUBLIC_API_URL`                           | Optional (required for vendor calls)           | none                             | Public API URL Twilio webhooks are built and signed on   |
-| `CALLS_ENABLED`                            | Optional                                       | `false`                          | Master switch for vendor calls                           |
-| `DEMO_RETRY_MINUTES`                       | Optional                                       | `90`                             | Wait before retrying a missed routine / low call         |
-| `CALL_VOICE`                               | Optional                                       | `Google.en-US-Chirp3-HD-Aoede`   | Twilio `<Say>` voice                                     |
-| `JOBS_SECRET`                              | Optional                                       | none (route disabled)            | Secret for `POST /api/jobs/run-due`                      |
-| `EVAL_TPM` / `EVAL_RPM`                    | Optional (eval only, not in `.env.example`)    | `7000` / `25`                    | Eval pacing for the Groq free tier                       |
-
-**Deploy (free tiers):** API on Render (`render.yaml`), web on Vercel (`vercel.json`, Root
-Directory = repo root, `VITE_API_URL` = the Render URL), MongoDB Atlas free cluster. Pushing to
-`main` redeploys both.
+Open http://localhost:5173. Try `/r/elmwood` (the QR page) and the Sensor simulator. Tests, eval,
+env vars and deploy: [Setup →](docs/setup.md)
 
 ## What's next
 
@@ -385,24 +100,3 @@ Directory = repo root, `VITE_API_URL` = the Render URL), MongoDB Atlas free clus
   limits instead of proposing.
 - **Production calling.** A purchased phone number and vendor consent to automated calls, instead
   of the demo number that only rings the author's phone.
-
-## Known limits
-
-- **Fake data.** Sites, assets, vendors, budgets, history and sensor readings are generated.
-- **Author-written test cases.** The tune set and half the holdout were written by the same author
-  who wrote the prompts. The other 10 holdout cases use messages written by a person, with expected
-  answers labeled by a separate AI reviewer, not the prompt author.
-- **Private mode is untested.** It is supported by configuration only.
-- **Dispatch emails are not sent.** They are drafted, stored on the work order and shown as
-  "Draft — not sent".
-- **Free hosting sleeps.** Render's free tier spins down after 15 minutes idle, so the first
-  request can take about a minute. Atlas free clusters pause after long inactivity.
-- **Demo data ages.** The seeded open work orders are placed 10–120 hours before the seed time, and
-  duplicate detection only looks back 72 hours. On the live demo, press **Reset demo** before
-  trying the duplicate examples.
-- No auth or roles, a single tenant, no PII scrubbing, and no real IoT integration (out of scope).
-  Vendor acceptance comes from the optional dispatch call. Live work orders stop at `accepted`;
-  `in_progress` and `completed` appear only in seeded history.
-- **Vendor calls are a demo.** They only ring the author's own phone, so a quote "comparison"
-  is the author playing both vendors. Quotes are rough phone estimates, not bids. The scheduler
-  runs in the API process; on the free tier, retries due while the server sleeps run when it wakes.
