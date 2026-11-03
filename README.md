@@ -16,9 +16,9 @@ All data is fake. "Harbor & Hearth Kitchen" and every vendor are fictional.
 
 ## Built as a proposal for LeanSite
 
-Vera's Phase 1 answers questions and advises. This prototype shows a Phase 2 step: the agent drafts actions and a human approves each one. It is designed to fit
-how Vera is publicly described. It does not claim to match Vera's internal architecture, which I
-haven't seen.
+Vera's Phase 1 answers questions and advises. This prototype shows a Phase 2 step: the agent
+drafts actions and a human approves each one. It is designed to fit how Vera is publicly described.
+It does not claim to match Vera's internal architecture, which I haven't seen.
 
 ## Architecture
 
@@ -285,8 +285,8 @@ voice; any Twilio `<Say>` voice name works, e.g. `Google.en-US-Chirp3-HD-Charon`
 vendor phone numbers are fake and are never dialed; one function picks the number and a test checks
 it. Starting calls needs `CALLS_ENABLED=true` on the server _and_ the admin key (entered under
 Settings, kept in the browser's local storage until "Forget key"); automated follow-ups in a chain
-an admin started don't ask for the key again. Visitors without the key see the most recent stored call, labeled "Recorded demo
-call". The server allows at most 6 calls per work order and 12 an hour in total (placements Twilio
+an admin started don't ask for the key again. Visitors without the key see the most recent stored
+call, labeled "Recorded demo call". The server allows at most 6 calls per work order and 12 an hour in total (placements Twilio
 refuses don't count). Each call is cut at 180 seconds (Twilio's `timeLimit`, plus a server-side
 hangup), and every Twilio webhook must carry a valid `X-Twilio-Signature` (403 otherwise). Only the
 agent's own turn-by-turn transcript is stored. Calls are not recorded.
