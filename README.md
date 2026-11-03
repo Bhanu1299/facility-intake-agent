@@ -10,7 +10,6 @@ human action is written to an Activity Log.
 - **Live demo:** https://facility-intake-agent.vercel.app _(free hosting: the first request after
   idle can take about a minute while the API wakes up)_
 - **API health:** https://facility-intake-agent-api.onrender.com/api/health
-- **90-second video:** _link placeholder_
 
 All data is fake. "Harbor & Hearth Kitchen" and every vendor are fictional.
 
