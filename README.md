@@ -16,8 +16,7 @@ All data is fake. "Harbor & Hearth Kitchen" and every vendor are fictional.
 
 ## Built as a proposal for LeanSite
 
-Built as a proposal for LeanSite. Vera's Phase 1 answers questions and advises. This prototype
-shows a Phase 2 step: the agent drafts actions and a human approves each one. It is designed to fit
+Vera's Phase 1 answers questions and advises. This prototype shows a Phase 2 step: the agent drafts actions and a human approves each one. It is designed to fit
 how Vera is publicly described. It does not claim to match Vera's internal architecture, which I
 haven't seen.
 
@@ -108,7 +107,7 @@ so a client can't bypass it.
 
 There are 60 labeled cases: 40 for tuning, and a 20-case holdout that was never used for tuning.
 The tune set and the AI half of the holdout were written by the author before any prompt existed.
-The human half of the holdout is messages sourced from a human; expected answers labeled by a
+The human half of the holdout uses messages written by a person, with expected answers labeled by a
 separate AI reviewer, not the prompt author.
 
 **Holdout** (`eval/report-holdout.md`, run once, no prompt changes after):
@@ -285,8 +284,8 @@ voice; any Twilio `<Say>` voice name works, e.g. `Google.en-US-Chirp3-HD-Charon`
 **Demo safety.** The app only ever dials `DEMO_VENDOR_PHONE`, the author's own number. The seeded
 vendor phone numbers are fake and are never dialed; one function picks the number and a test checks
 it. Starting calls needs `CALLS_ENABLED=true` on the server _and_ the admin key (entered under
-Settings, kept in the browser's local storage until "Forget key"); automated follow-ups in a chain an admin started don't ask for
-the key again. Visitors without the key see the most recent stored call, labeled "Recorded demo
+Settings, kept in the browser's local storage until "Forget key"); automated follow-ups in a chain
+an admin started don't ask for the key again. Visitors without the key see the most recent stored call, labeled "Recorded demo
 call". The server allows at most 6 calls per work order and 12 an hour in total (placements Twilio
 refuses don't count). Each call is cut at 180 seconds (Twilio's `timeLimit`, plus a server-side
 hangup), and every Twilio webhook must carry a valid `X-Twilio-Signature` (403 otherwise). Only the
@@ -339,14 +338,14 @@ npm run dev              # API on :4000 (auto-seeds), web on :5173 (proxies /api
 
 Open http://localhost:5173. Try `/r/elmwood` (the QR page) and the Sensor simulator.
 
-| Command                                | What it does                                                                                                                              |
-| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm run seed`                         | Wipes and reseeds the database in `MONGODB_URI` (5 sites, 55 assets, 13 vendors, 100 closed + 6 open work orders, 14 days of sensor data) |
-| _Reset demo_ button                    | Same reset from the UI (`POST /api/demo/reset`)                                                                                           |
-| `npm test`                             | Jest unit and API tests. No LLM calls (the model client is faked); MongoDB runs in memory                                                 |
-| `npm run eval -- --set tune`           | Runs the 40 tune cases through the real pipeline on Groq and writes `eval/report-tune.md`                                                 |
-| `npm run eval -- --set holdout`        | The 20 holdout cases (10 AI-written, 10 human-written). Reports AI, human and combined scores. Run once                                   |
-| `npm run lint` / `typecheck` / `build` | The usual                                                                                                                                 |
+| Command                                | What it does                                                                                                                                 |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run seed`                         | Wipes and reseeds the database in `MONGODB_URI` (5 sites, 55 assets, 13 vendors, 100 completed + 6 open work orders, 14 days of sensor data) |
+| _Reset demo_ button                    | Same reset from the UI (`POST /api/demo/reset`)                                                                                              |
+| `npm test`                             | Jest unit and API tests. No LLM calls (the model client is faked); MongoDB runs in memory                                                    |
+| `npm run eval -- --set tune`           | Runs the 40 tune cases through the real pipeline on Groq and writes `eval/report-tune.md`                                                    |
+| `npm run eval -- --set holdout`        | The 20 holdout cases (10 AI-written, 10 human-written). Reports AI, human and combined scores. Run once                                      |
+| `npm run lint` / `typecheck` / `build` | The usual                                                                                                                                    |
 
 The eval always uses its own in-memory database (it ignores `MONGODB_URI`) and reseeds before
 every case. It is paced for the Groq free tier (about 7K tokens and 25 requests per minute per
@@ -364,7 +363,7 @@ if safety recall is below 100%.
 | `PORT`                                     | Optional                                       | `4000`                           | API port                                                 |
 | `NODE_ENV`                                 | Optional                                       | `development`                    | `development`, `test` or `production`                    |
 | `LLM_BASE_URL`                             | Optional                                       | `https://api.groq.com/openai/v1` | Any OpenAI-compatible endpoint (private mode)            |
-| `LLM_MODEL_SMALL` / `LLM_MODEL_BIG`        | Optional                                       | `openai/gpt-oss-20b` / `-120b`   | Small model first, big model on validation failure       |
+| `LLM_MODEL_SMALL` / `LLM_MODEL_BIG`        | Optional                                       | `openai/gpt-oss-20b` / `-120b`   | Small model first, big model on escalation               |
 | `AUTONOMY_MODE`                            | Optional                                       | `propose`                        | Starting autonomy mode: `advise`, `propose` or `auto`    |
 | `DEMO_RATE_LIMIT_PER_HOUR`                 | Optional                                       | `20`                             | Signal submissions and resets per IP per hour            |
 | `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` | Optional (required for vendor calls)           | none                             | Twilio credentials                                       |
@@ -397,7 +396,7 @@ Directory = repo root, `VITE_API_URL` = the Render URL), MongoDB Atlas free clus
 
 - **Fake data.** Sites, assets, vendors, budgets, history and sensor readings are generated.
 - **Author-written test cases.** The tune set and half the holdout were written by the same author
-  who wrote the prompts. The other 10 holdout cases are messages sourced from a human; expected
+  who wrote the prompts. The other 10 holdout cases use messages written by a person, with expected
   answers labeled by a separate AI reviewer, not the prompt author.
 - **Private mode is untested.** It is supported by configuration only.
 - **Dispatch emails are not sent.** They are drafted, stored on the work order and shown as
@@ -408,8 +407,8 @@ Directory = repo root, `VITE_API_URL` = the Render URL), MongoDB Atlas free clus
   duplicate detection only looks back 72 hours. On the live demo, press **Reset demo** before
   trying the duplicate examples.
 - No auth or roles, a single tenant, no PII scrubbing, and no real IoT integration (out of scope).
-  Vendor acceptance comes from the optional dispatch call; `in_progress` and `completed` aren't
-  modeled.
+  Vendor acceptance comes from the optional dispatch call. Live work orders stop at `accepted`;
+  `in_progress` and `completed` appear only in seeded history.
 - **Vendor calls are a demo.** They only ring the author's own phone, so a quote "comparison"
   is the author playing both vendors. Quotes are rough phone estimates, not bids. The scheduler
   runs in the API process; on the free tier, retries due while the server sleeps run when it wakes.
