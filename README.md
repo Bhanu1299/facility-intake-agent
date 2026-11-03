@@ -301,11 +301,6 @@ treats AI-generated voices as "artificial" voices under the TCPA.
 model answers, and the vendor can't interrupt the agent mid-sentence. A streaming voice stack would
 fix both but costs more and has more moving parts.
 
-Settings (server only): `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`,
-`DEMO_VENDOR_PHONE`, `CALL_ADMIN_KEY`, `CALLS_ENABLED` (default `false`), `PUBLIC_API_URL` (the
-public API URL that Twilio webhooks are built and signed on), `DEMO_RETRY_MINUTES` (default 90; 2
-for a demo video) and `JOBS_SECRET` (for `/api/jobs/run-due`; unset disables the route).
-
 ## Privacy
 
 - **Runs entirely on your infrastructure, with your database and your API key.** The server only
